@@ -18,6 +18,31 @@ local Directory = requireModule(library:WaitForChild("Directory"))
 local PresentCmds = requireModule(clientFolder:WaitForChild("PresentCmds"))
 local LootboxCmds = requireModule(clientFolder:WaitForChild("LootboxCmds"))
 
+-- Bảo vệ Thread Identity (tránh bị Save.Get() của game hạ quyền xuống Identity 2 gây lỗi Plugin capability)
+local function callWithSavedIdentity(fn: (...any) -> ...any, ...: any): (boolean, any)
+    local env = getfenv() :: any
+    local getId = env.getthreadidentity or env.getidentity or env.getthreadcontext
+    local setId = env.setthreadidentity or env.setidentity or env.setthreadcontext
+    local oldId = nil
+    if type(getId) == "function" then
+        local ok, id = pcall(getId)
+        if ok then oldId = id end
+    end
+    local okCall, result = pcall(fn, ...)
+    if oldId ~= nil and type(setId) == "function" then
+        pcall(setId, oldId)
+    end
+    return okCall, result
+end
+
+local function safeGetSave(): any
+    local ok, data = callWithSavedIdentity(Save.Get)
+    if ok then
+        return data
+    end
+    return nil
+end
+
 -- ================= BIẾN TRẠNG THÁI =================
 _G.AutoGiftSession = (_G.AutoGiftSession or 0) + 1
 local currentSession = _G.AutoGiftSession
@@ -71,7 +96,7 @@ end
 local function scanAvailableGiftsInBag(): { string }
     local list = {}
     local seen = {}
-    local saveData = Save.Get()
+    local saveData = safeGetSave()
     if not saveData or not saveData.Inventory then
         return { "Midnight Gift" }
     end
@@ -99,7 +124,7 @@ local function scanAvailableGiftsInBag(): { string }
 end
 
 local function getGiftInfo(giftName: string): (string?, number, string?)
-    local saveData = Save.Get()
+    local saveData = safeGetSave()
     if not saveData or not saveData.Inventory then
         return nil, 0, nil
     end
@@ -167,6 +192,7 @@ end
 
 local function checkAndHideGui(gui: Instance)
     if not state.hideGiftGui or not gui:IsA("ScreenGui") then return end
+    if gui.Name == "DuckkyHub_ScreenGui" then return end
     local nameLower = string.lower(gui.Name)
     if string.find(nameLower, "lootbox") or string.find(nameLower, "giftbag") or string.find(nameLower, "opening") or string.find(nameLower, "reward") then
         (gui :: any).Enabled = false
@@ -177,30 +203,24 @@ end
 
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
--- Xóa UI cũ nếu chạy lại script
-for _, parent in ipairs({ playerGui, game:GetService("CoreGui") }) do
-    pcall(function()
-        local old = parent:FindFirstChild("DuckkyHub_ScreenGui")
-        if old then old:Destroy() end
-    end)
-end
+-- Dọn sạch UI cũ trong PlayerGui (và CoreGui nếu có từ lần chạy trước)
+pcall(function()
+    local old = playerGui:FindFirstChild("DuckkyHub_ScreenGui")
+    if old then old:Destroy() end
+end)
+pcall(function()
+    local oldCore = game:GetService("CoreGui"):FindFirstChild("DuckkyHub_ScreenGui")
+    if oldCore then oldCore:Destroy() end
+end)
 
+-- Đặt ScreenGui vào PlayerGui để KHÔNG BAO GIỜ bị lỗi "lacking capability Plugin"
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "DuckkyHub_ScreenGui"
 screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999999
+screenGui.IgnoreGuiInset = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-local parentOk = pcall(function()
-    local gethuiFunc = (getfenv() :: any).gethui
-    if type(gethuiFunc) == "function" then
-        screenGui.Parent = gethuiFunc()
-    else
-        screenGui.Parent = game:GetService("CoreGui")
-    end
-end)
-if not parentOk or not screenGui.Parent then
-    screenGui.Parent = playerGui
-end
+screenGui.Parent = playerGui
 
 -- Hàm hỗ trợ kéo thả mượt mà (giữ chuột kéo bất kỳ đâu trên bảng menu)
 local function makeDraggable(dragHandle: GuiObject, targetFrame: GuiObject)
@@ -482,7 +502,7 @@ giftPage.Visible = true
 local playerPage = createPage()
 
 -- Nút chuyển Tab trên Sidebar
-local function createTabBtn(text: string, order: number, targetPage: ScrollingFrame, isDefault: boolean): TextButton
+local function createTabBtn(text: string, order: number, isDefault: boolean): TextButton
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -16, 0, 36)
     btn.Position = UDim2.fromOffset(8, 12 + (order - 1) * 44)
@@ -500,8 +520,8 @@ local function createTabBtn(text: string, order: number, targetPage: ScrollingFr
     return btn
 end
 
-local tab1Btn = createTabBtn("🎁 Auto Mở Quà", 1, giftPage, true)
-local tab2Btn = createTabBtn("⚡ Nhân Vật & AFK", 2, playerPage, false)
+local tab1Btn = createTabBtn("🎁 Auto Mở Quà", 1, true)
+local tab2Btn = createTabBtn("⚡ Nhân Vật & AFK", 2, false)
 
 local function switchTab(activeBtn: TextButton, activePage: ScrollingFrame)
     giftPage.Visible = (activePage == giftPage)
@@ -863,7 +883,7 @@ popCorner.Parent = popNowBtn
 
 popNowBtn.MouseButton1Click:Connect(function()
     if type(PresentCmds.OpenCurrent) == "function" then
-        pcall(PresentCmds.OpenCurrent)
+        callWithSavedIdentity(PresentCmds.OpenCurrent)
     end
 end)
 
@@ -928,18 +948,18 @@ task.spawn(function()
                 local itemObj = makeItemObject(giftUid, state.targetGiftName)
 
                 if type(PresentCmds.OpenCurrent) == "function" then
-                    pcall(PresentCmds.OpenCurrent)
+                    callWithSavedIdentity(PresentCmds.OpenCurrent)
                 end
 
-                pcall(LootboxCmds.Open, itemObj, amountToOpen)
+                callWithSavedIdentity(LootboxCmds.Open, itemObj, amountToOpen)
 
                 task.wait(0.8)
                 if type(PresentCmds.OpenCurrent) == "function" then
-                    pcall(PresentCmds.OpenCurrent)
+                    callWithSavedIdentity(PresentCmds.OpenCurrent)
                 end
 
                 if type(PresentCmds.Current) == "function" then
-                    pcall(function()
+                    callWithSavedIdentity(function()
                         local cur = PresentCmds.Current()
                         if type(cur) == "table" then
                             for k, p in pairs(cur) do
