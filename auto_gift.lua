@@ -63,106 +63,71 @@ local function getGiftInfo(giftName)
     return nil, 0, nil
 end
 
--- 2. Giải mã chi tiết PresentCmds và LootboxCmds để lấy đúng quy trình mở liên tục
-local function inspectPresentAndLootboxModules()
-    print("=== [AutoGift v5] PHÂN TÍCH PRESENTCMDS & LOOTBOXCMDS ===")
-
-    -- In tất cả Remote có chữ KX, Present, Gift, Lootbox
+-- 2. In thông tin hàm của PresentCmds & LootboxCmds và các Remote liên quan
+local function printModuleDetails()
+    print("=== [AutoGift v6] KIỂM TRA PRESENTCMDS & REMOTES ===")
     for _, rem in ipairs(network:GetChildren()) do
         local nl = string.lower(rem.Name)
-        if string.find(nl, "kx") or string.find(nl, "present") or string.find(nl, "gift") or string.find(nl, "lootbox") then
+        if string.find(nl, "kx") or string.find(nl, "present") or string.find(nl, "lootbox") or string.find(nl, "giftbag") then
             print(string.format("  [Remote] '%s' (%s)", rem.Name, rem.ClassName))
         end
     end
 
-    -- Thử decompile nếu công cụ hỗ trợ
-    if decompile then
-        local pMod = clientFolder:FindFirstChild("PresentCmds")
-        if pMod then
-            local ok, src = pcall(decompile, pMod)
-            if ok and type(src) == "string" and #src > 0 then
-                print("--- MÃ NGUỒN PRESENTCMDS ---")
-                for line in string.gmatch(src, "[^\r\n]+") do
-                    if string.find(line, "Network") or string.find(line, "Invoke") or string.find(line, "Fire") or string.find(line, "function") or string.find(line, "KX") or string.find(line, "Open") or string.find(line, "Drop") then
-                        print("  " .. line)
-                    end
-                end
-            end
-        end
-    end
-
-    -- Đọc Constants & Upvalues của PresentCmds
     if PresentCmds and type(PresentCmds) == "table" then
-        for funcName, fn in pairs(PresentCmds) do
+        for k, fn in pairs(PresentCmds) do
             if type(fn) == "function" then
-                local infoStr = "  [PresentCmds." .. tostring(funcName) .. "]"
+                local line, nparams, isvar = "?", "?", "?"
+                pcall(function()
+                    line, nparams, isvar = debug.info(fn, "la")
+                end)
+                local constStr = ""
                 if debug and debug.getconstants then
-                    local okC, consts = pcall(debug.getconstants, fn)
-                    if okC and type(consts) == "table" then
-                        local list = {}
-                        for _, c in pairs(consts) do
+                    local okC, cs = pcall(debug.getconstants, fn)
+                    if okC and type(cs) == "table" then
+                        local arr = {}
+                        for _, c in pairs(cs) do
                             if type(c) == "string" or type(c) == "number" then
-                                table.insert(list, tostring(c))
+                                table.insert(arr, tostring(c))
                             end
                         end
-                        infoStr = infoStr .. " Constants: " .. table.concat(list, ", ")
+                        constStr = " | Consts: " .. table.concat(arr, ", ")
                     end
                 end
-                print(infoStr)
+                print(string.format("  [PresentCmds.%s] Line:%s Params:%s%s", tostring(k), tostring(line), tostring(nparams), constStr))
             end
         end
     end
 
-    -- Đọc Constants của LootboxCmds
     if LootboxCmds and type(LootboxCmds) == "table" then
-        for funcName, fn in pairs(LootboxCmds) do
+        for k, fn in pairs(LootboxCmds) do
             if type(fn) == "function" then
-                local infoStr = "  [LootboxCmds." .. tostring(funcName) .. "]"
+                local line, nparams = "?", "?"
+                pcall(function()
+                    line, nparams = debug.info(fn, "la")
+                end)
+                local constStr = ""
                 if debug and debug.getconstants then
-                    local okC, consts = pcall(debug.getconstants, fn)
-                    if okC and type(consts) == "table" then
-                        local list = {}
-                        for _, c in pairs(consts) do
+                    local okC, cs = pcall(debug.getconstants, fn)
+                    if okC and type(cs) == "table" then
+                        local arr = {}
+                        for _, c in pairs(cs) do
                             if type(c) == "string" or type(c) == "number" then
-                                table.insert(list, tostring(c))
+                                table.insert(arr, tostring(c))
                             end
                         end
-                        infoStr = infoStr .. " Constants: " .. table.concat(list, ", ")
+                        constStr = " | Consts: " .. table.concat(arr, ", ")
                     end
                 end
-                print(infoStr)
+                print(string.format("  [LootboxCmds.%s] Line:%s Params:%s%s", tostring(k), tostring(line), tostring(nparams), constStr))
             end
         end
     end
-
-    -- Gắn bộ theo dõi mọi lệnh gọi từ PresentCmds khi bạn mở quà
-    if hookmetamethod and getnamecallmethod then
-        pcall(function()
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                if (method == "InvokeServer" or method == "FireServer") and self.Parent == network then
-                    local nameL = string.lower(self.Name)
-                    if not string.find(nameL, "idle") and not string.find(nameL, "click") and not string.find(nameL, "orb") and not string.find(nameL, "breakable") and not string.find(nameL, "pet") and not string.find(nameL, "ping") then
-                        local args = { ... }
-                        local argSummary = {}
-                        for i, a in ipairs(args) do
-                            table.insert(argSummary, string.format("[%d]=%s(%s)", i, tostring(a), typeof(a)))
-                        end
-                        warn(string.format("🔥 [BẮT GÓI TIN] Remote: '%s' (%s) | Args: %s", self.Name, method, table.concat(argSummary, ", ")))
-                    end
-                end
-                return oldNamecall(self, ...)
-            end)
-        end)
-    end
-
-    print("=== [AutoGift v5] HOÀN TẤT PHÂN TÍCH ===")
+    print("====================================================")
 end
 
--- 3. Tạo tọa độ chuẩn bằng chính hàm PresentCmds.Ground của game (nếu có) hoặc Raycast
+-- 3. Tạo danh sách tọa độ mặt đất quanh nhân vật
 local function getDropVectors(count)
-    -- Thử dùng hàm tính mặt đất chính chủ của PresentCmds
+    -- Ưu tiên dùng hàm tính tọa độ mặt đất chuẩn của game nếu có
     if PresentCmds and type(PresentCmds.Ground) == "function" then
         local ok, res = pcall(PresentCmds.Ground, count)
         if ok and type(res) == "table" and #res == count and typeof(res[1]) == "Vector3" then
@@ -173,7 +138,7 @@ local function getDropVectors(count)
     local positions = table.create(count)
     local character = localPlayer.Character
     local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-    local centerPos = rootPart and rootPart.Position or Vector3.new(152.0, 16.5, -210.0)
+    local centerPos = rootPart and rootPart.Position or Vector3.new(152.0, 14.0, -210.0)
 
     local rayParams = RaycastParams.new()
     if character then
@@ -195,30 +160,15 @@ local function getDropVectors(count)
     return positions
 end
 
--- 4. Vô hiệu hóa hiệu ứng rơi mô hình quà (Ẩn GUI / 3D Model)
-local function disableDropAnimation()
-    if not _G.HideGiftGui then return end
-    if PresentCmds and type(PresentCmds) == "table" then
-        pcall(function()
-            if type(PresentCmds.DropModel) == "function" then
-                PresentCmds.DropModel = function(...)
-                    return
-                end
-            end
-        end)
-    end
-end
-
 -- ================= KHỞI CHẠY =================
 task.spawn(function()
     local initialUid, initialAmount, initialCat = getGiftInfo(targetGiftName)
     print(string.format(
-        "[AutoGift v5] Phiên #%d | Quà: '%s' [%s] | UID: %s | Số lượng hiện tại: %d",
+        "[AutoGift v6] Phiên #%d | Quà: '%s' [%s] | UID: %s | Số lượng: %d",
         currentSession, targetGiftName, tostring(initialCat), tostring(initialUid), initialAmount
     ))
 
-    inspectPresentAndLootboxModules()
-    disableDropAnimation()
+    printModuleDetails()
 
     local openGiftRemote = network:FindFirstChild("KX_Release")
 
@@ -226,47 +176,41 @@ task.spawn(function()
         local giftUid, currentAmount = getGiftInfo(targetGiftName)
 
         if not giftUid or currentAmount <= 0 then
-            print("[AutoGift v5] ĐÃ MỞ HẾT SẠCH QUÀ TRONG TÚI!")
+            print("[AutoGift v6] ĐÃ MỞ HẾT SẠCH QUÀ TRONG TÚI!")
             break
         end
 
         local amountToOpen = math.min(maxAmountPerOpen, currentAmount)
         local vectors = getDropVectors(amountToOpen)
 
-        -- BƯỚC 1: Nếu đang có hộp quà cũ nằm trên đất chưa nổ xong, gọi OpenCurrent() để nổ ngay lập tức!
+        -- Bước 1: Kích nổ các hộp quà đang nằm sẵn trên đất (nếu có)
         if PresentCmds and type(PresentCmds.OpenCurrent) == "function" then
             pcall(PresentCmds.OpenCurrent)
         end
 
-        -- BƯỚC 2: Thả 8 hộp quà mới xuống đất (qua PresentCmds.Drop hoặc KX_Release)
-        local dropped = false
-        if PresentCmds and type(PresentCmds.Drop) == "function" then
-            local ok, res = pcall(PresentCmds.Drop, giftUid, amountToOpen, vectors)
-            if ok and res ~= false then
-                dropped = true
-            end
-        end
-
-        if not dropped and openGiftRemote then
-            local ok, res = pcall(function()
+        -- Bước 2: Gửi trực tiếp KX_Release lên Server để thả 8 hộp quà mới
+        if openGiftRemote then
+            local ok, res1, res2 = pcall(function()
                 return openGiftRemote:InvokeServer(giftUid, amountToOpen, vectors)
             end)
-            if ok and res ~= false then
-                dropped = true
+            if not ok or res1 == false then
+                warn(string.format("[AutoGift v6] KX_Release trả về: %s | %s", tostring(res1), tostring(res2)))
+            else
+                print(string.format("🎁 [AutoGift v6] Đã thả %d hộp xuống đất! Đang tự động kích nổ...", amountToOpen))
             end
         end
 
-        -- BƯỚC 3: Đợi một nhịp ngắn rồi kích nổ luôn 8 hộp vừa thả để đợt sau không bị kẹt!
-        task.wait(0.4)
+        -- Bước 3: Đợi 0.5s rồi gọi OpenCurrent() để tự động Click kích nổ 8 hộp vừa thả
+        task.wait(0.5)
         if PresentCmds and type(PresentCmds.OpenCurrent) == "function" then
             pcall(PresentCmds.OpenCurrent)
         end
 
         task.wait(delayTime)
 
-        local _, newAmount = getGiftInfo(targetGiftName)
-        if newAmount < currentAmount then
-            print(string.format("✅ [AutoGift v5] Đã mở thêm %d hộp! Trong túi còn: %d", currentAmount - newAmount, newAmount))
+        local _, afterAmount = getGiftInfo(targetGiftName)
+        if afterAmount < currentAmount then
+            print(string.format("✅ [AutoGift v6] Mở thành công! Đã giảm %d hộp -> Còn lại: %d", currentAmount - afterAmount, afterAmount))
         end
     end
 end)
