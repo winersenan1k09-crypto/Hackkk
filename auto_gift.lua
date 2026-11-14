@@ -2,6 +2,8 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 
 local localPlayer = Players.LocalPlayer
 local library = ReplicatedStorage:WaitForChild("Library")
@@ -28,6 +30,8 @@ local state = {
     clearLagEffects = true,
     hideGiftGui = true,
     antiAfk = true,
+    walkSpeed = 16,
+    jumpPower = 50,
     totalOpenedSession = 0,
 }
 
@@ -37,8 +41,7 @@ local cachedDirData = nil
 
 -- ================= HÀM XỬ LÝ DỮ LIỆU GAME =================
 
--- 1. Tìm dữ liệu gốc (Directory) của hộp quà
-local function findItemDirectory(giftName)
+local function findItemDirectory(giftName: string)
     local targetLower = string.lower(giftName)
     if type(Directory) == "table" then
         if type(Directory.Lootboxes) == "table" then
@@ -65,8 +68,7 @@ local function findItemDirectory(giftName)
     }
 end
 
--- 2. Quét danh sách tất cả các loại hộp quà/túi quà hiện có trong túi đồ
-local function scanAvailableGiftsInBag()
+local function scanAvailableGiftsInBag(): { string }
     local list = {}
     local seen = {}
     local saveData = Save.Get()
@@ -96,8 +98,7 @@ local function scanAvailableGiftsInBag()
     return list
 end
 
--- 3. Tìm UID và số lượng thực tế của hộp quà đang chọn
-local function getGiftInfo(giftName)
+local function getGiftInfo(giftName: string): (string?, number, string?)
     local saveData = Save.Get()
     if not saveData or not saveData.Inventory then
         return nil, 0, nil
@@ -129,8 +130,7 @@ local function getGiftInfo(giftName)
     return nil, 0, nil
 end
 
--- 4. Tạo đối tượng Item đầy đủ GetId(), GetUID(), Directory() cho LootboxCmds.Open
-local function makeItemObject(uid, giftName)
+local function makeItemObject(uid: string, giftName: string)
     if not cachedDirData or string.lower(tostring(cachedDirData._id or "")) ~= string.lower(giftName) then
         cachedDirData = findItemDirectory(giftName)
     end
@@ -154,271 +154,750 @@ local function makeItemObject(uid, giftName)
     })
 end
 
--- 5. Dọn hiệu ứng nổ 3D & âm thanh chống tràn RAM
-local function cleanElementLag(obj)
+local function cleanElementLag(obj: Instance)
     if not state.clearLagEffects then return end
     if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Sparkles") or obj:IsA("Smoke") then
-        obj.Enabled = false
+        (obj :: any).Enabled = false
     elseif obj:IsA("Explosion") then
-        obj.Visible = false
+        (obj :: any).Visible = false
     elseif obj:IsA("Sound") then
-        obj.Volume = 0
+        (obj :: any).Volume = 0
     end
 end
 
-local function checkAndHideGui(gui)
+local function checkAndHideGui(gui: Instance)
     if not state.hideGiftGui or not gui:IsA("ScreenGui") then return end
     local nameLower = string.lower(gui.Name)
     if string.find(nameLower, "lootbox") or string.find(nameLower, "giftbag") or string.find(nameLower, "opening") or string.find(nameLower, "reward") then
-        gui.Enabled = false
+        (gui :: any).Enabled = false
     end
 end
 
--- ================= KHỞI TẠO GIAO DIỆN WINDUI (DUCKKY HUB) =================
-local loadCode = loadstring :: any
-local WindUI = loadCode((game :: any):HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+-- ================= GIAO DIỆN NATIVE MACOS (DUCKKY HUB - SIÊU TỐC, KHÔNG LỖI) =================
 
-local Window = WindUI:CreateWindow({
-    Title = "Duckky Hub",
-    Icon = "gift",
-    Author = "Pet Simulator 99 | Auto Gift & Utilities",
-    Folder = "DuckkyHub",
-    Size = UDim2.fromOffset(580, 460),
-    Theme = "Dark",
-    Resizable = true,
-    Transparent = true,
-    ToggleKey = Enum.KeyCode.RightControl,
-    Topbar = {
-        ButtonsType = "Mac" -- 3 nút Traffic Lights phong cách macOS: Đỏ (x) và Vàng (-)
-    },
-    OpenButton = {
-        Title = "🦆 Duckky Hub",
-        Icon = "gift",
-        CornerRadius = UDim.new(0, 10),
-        StrokeThickness = 1.5,
-        Color = ColorSequence.new(
-            Color3.fromHex("FFAA00"),
-            Color3.fromHex("FF5500")
-        ),
-        OnlyMobile = false,
-        Enabled = true,
-        Draggable = true,
-    }
-})
+local playerGui = localPlayer:WaitForChild("PlayerGui")
 
--- ================= TẠO TABS =================
-local GiftTab = Window:Tab({
-    Title = "Auto Mở Quà",
-    Icon = "gift",
-})
+-- Xóa UI cũ nếu chạy lại script
+for _, parent in ipairs({ playerGui, game:GetService("CoreGui") }) do
+    pcall(function()
+        local old = parent:FindFirstChild("DuckkyHub_ScreenGui")
+        if old then old:Destroy() end
+    end)
+end
 
-local PlayerTab = Window:Tab({
-    Title = "Nhân Vật & AFK",
-    Icon = "user",
-})
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "DuckkyHub_ScreenGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- ================= TAB 1: AUTO MỞ QUÀ =================
-local StatusParagraph = GiftTab:Paragraph({
-    Title = "Trạng Thái: Đang chờ bật",
-    Desc = "Đang kiểm tra kho đồ..."
-})
+local parentOk = pcall(function()
+    local gethuiFunc = (getfenv() :: any).gethui
+    if type(gethuiFunc) == "function" then
+        screenGui.Parent = gethuiFunc()
+    else
+        screenGui.Parent = game:GetService("CoreGui")
+    end
+end)
+if not parentOk or not screenGui.Parent then
+    screenGui.Parent = playerGui
+end
+
+-- Hàm hỗ trợ kéo thả mượt mà (giữ chuột kéo bất kỳ đâu trên bảng menu)
+local function makeDraggable(dragHandle: GuiObject, targetFrame: GuiObject)
+    local dragging = false
+    local dragInput = nil
+    local dragStart = Vector3.zero
+    local startPos = UDim2.new()
+
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = targetFrame.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    dragHandle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            targetFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+-- Nút nổi bật/tắt nhanh "🦆 Duckky Hub"
+local floatBtn = Instance.new("TextButton")
+floatBtn.Name = "FloatToggleBtn"
+floatBtn.Size = UDim2.fromOffset(145, 38)
+floatBtn.Position = UDim2.new(0, 18, 0.5, -19)
+floatBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+floatBtn.TextColor3 = Color3.fromRGB(255, 210, 60)
+floatBtn.Font = Enum.Font.GothamBold
+floatBtn.TextSize = 14
+floatBtn.Text = "🦆 Duckky Hub"
+floatBtn.AutoButtonColor = true
+floatBtn.Parent = screenGui
+
+local floatCorner = Instance.new("UICorner")
+floatCorner.CornerRadius = UDim.new(0, 10)
+floatCorner.Parent = floatBtn
+
+local floatStroke = Instance.new("UIStroke")
+floatStroke.Color = Color3.fromRGB(255, 175, 40)
+floatStroke.Thickness = 1.5
+floatStroke.Parent = floatBtn
+
+makeDraggable(floatBtn, floatBtn)
+
+-- Khung cửa sổ chính macOS
+local FULL_SIZE = UDim2.fromOffset(560, 390)
+local MINI_SIZE = UDim2.fromOffset(560, 44)
+local isMinimized = false
+local isWindowVisible = true
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainWindow"
+mainFrame.Size = FULL_SIZE
+mainFrame.Position = UDim2.new(0.5, -280, 0.5, -195)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(65, 65, 80)
+mainStroke.Thickness = 1.2
+mainStroke.Parent = mainFrame
+
+-- Thanh tiêu đề (Topbar)
+local topBar = Instance.new("Frame")
+topBar.Name = "TopBar"
+topBar.Size = UDim2.new(1, 0, 0, 44)
+topBar.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+
+local topBarCorner = Instance.new("UICorner")
+topBarCorner.CornerRadius = UDim.new(0, 12)
+topBarCorner.Parent = topBar
+
+local topBarDivider = Instance.new("Frame")
+topBarDivider.Size = UDim2.new(1, 0, 0, 1)
+topBarDivider.Position = UDim2.new(0, 0, 1, -1)
+topBarDivider.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+topBarDivider.BorderSizePixel = 0
+topBarDivider.Parent = topBar
+
+-- Cho phép giữ chuột ở cả TopBar lẫn nền MainWindow để kéo bảng menu
+makeDraggable(topBar, mainFrame)
+makeDraggable(mainFrame, mainFrame)
+
+-- Tiêu đề Duckky Hub
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -180, 1, 0)
+titleLabel.Position = UDim2.fromOffset(92, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 15
+titleLabel.TextColor3 = Color3.fromRGB(245, 245, 250)
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Text = "🦆 Duckky Hub  —  Pet Simulator 99"
+titleLabel.Parent = topBar
+
+-- Cụm nút Traffic Lights phong cách macOS + nút [-] [x] rõ ràng
+-- Nút Đỏ [x] (Đóng/Ẩn)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "CloseBtn"
+closeBtn.Size = UDim2.fromOffset(28, 24)
+closeBtn.Position = UDim2.fromOffset(14, 10)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 95, 86)
+closeBtn.TextColor3 = Color3.fromRGB(40, 10, 10)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 13
+closeBtn.Text = "x"
+closeBtn.Parent = topBar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+-- Nút Vàng [-] (Thu gọn / Mở rộng)
+local minBtn = Instance.new("TextButton")
+minBtn.Name = "MinimizeBtn"
+minBtn.Size = UDim2.fromOffset(28, 24)
+minBtn.Position = UDim2.fromOffset(48, 10)
+minBtn.BackgroundColor3 = Color3.fromRGB(255, 189, 46)
+minBtn.TextColor3 = Color3.fromRGB(45, 30, 5)
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 15
+minBtn.Text = "-"
+minBtn.Parent = topBar
+
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 6)
+minCorner.Parent = minBtn
+
+-- Nút [-] và [x] phụ bên góc phải cho người quen dùng Windows
+local rightMinBtn = Instance.new("TextButton")
+rightMinBtn.Size = UDim2.fromOffset(30, 26)
+rightMinBtn.Position = UDim2.new(1, -72, 0, 9)
+rightMinBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+rightMinBtn.TextColor3 = Color3.fromRGB(230, 230, 240)
+rightMinBtn.Font = Enum.Font.GothamBold
+rightMinBtn.TextSize = 16
+rightMinBtn.Text = "-"
+rightMinBtn.Parent = topBar
+
+local rightMinCorner = Instance.new("UICorner")
+rightMinCorner.CornerRadius = UDim.new(0, 6)
+rightMinCorner.Parent = rightMinBtn
+
+local rightCloseBtn = Instance.new("TextButton")
+rightCloseBtn.Size = UDim2.fromOffset(30, 26)
+rightCloseBtn.Position = UDim2.new(1, -38, 0, 9)
+rightCloseBtn.BackgroundColor3 = Color3.fromRGB(210, 60, 65)
+rightCloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+rightCloseBtn.Font = Enum.Font.GothamBold
+rightCloseBtn.TextSize = 14
+rightCloseBtn.Text = "x"
+rightCloseBtn.Parent = topBar
+
+local rightCloseCorner = Instance.new("UICorner")
+rightCloseCorner.CornerRadius = UDim.new(0, 6)
+rightCloseCorner.Parent = rightCloseBtn
+
+-- Phần thân cửa sổ (Body)
+local bodyFrame = Instance.new("Frame")
+bodyFrame.Name = "BodyFrame"
+bodyFrame.Size = UDim2.new(1, 0, 1, -44)
+bodyFrame.Position = UDim2.fromOffset(0, 44)
+bodyFrame.BackgroundTransparency = 1
+bodyFrame.Parent = mainFrame
+
+-- Xử lý thu gọn [-] và đóng [x]
+local function toggleMinimize()
+    isMinimized = not isMinimized
+    local targetSize = isMinimized and MINI_SIZE or FULL_SIZE
+    minBtn.Text = isMinimized and "+" or "-"
+    rightMinBtn.Text = isMinimized and "+" or "-"
+    TweenService:Create(mainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Size = targetSize
+    }):Play()
+end
+
+local function toggleWindowVisible()
+    isWindowVisible = not isWindowVisible
+    mainFrame.Visible = isWindowVisible
+end
+
+minBtn.MouseButton1Click:Connect(toggleMinimize)
+rightMinBtn.MouseButton1Click:Connect(toggleMinimize)
+closeBtn.MouseButton1Click:Connect(toggleWindowVisible)
+rightCloseBtn.MouseButton1Click:Connect(toggleWindowVisible)
+floatBtn.MouseButton1Click:Connect(function()
+    isWindowVisible = not isWindowVisible
+    mainFrame.Visible = isWindowVisible
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.RightControl then
+        toggleWindowVisible()
+    end
+end)
+
+-- Thanh Sidebar bên trái
+local sidebar = Instance.new("Frame")
+sidebar.Name = "Sidebar"
+sidebar.Size = UDim2.new(0, 150, 1, 0)
+sidebar.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+sidebar.BorderSizePixel = 0
+sidebar.Parent = bodyFrame
+
+local sidebarDivider = Instance.new("Frame")
+sidebarDivider.Size = UDim2.new(0, 1, 1, 0)
+sidebarDivider.Position = UDim2.new(1, -1, 0, 0)
+sidebarDivider.BackgroundColor3 = Color3.fromRGB(48, 48, 60)
+sidebarDivider.BorderSizePixel = 0
+sidebarDivider.Parent = sidebar
+
+-- Khung nội dung bên phải
+local pagesContainer = Instance.new("Frame")
+pagesContainer.Name = "PagesContainer"
+pagesContainer.Size = UDim2.new(1, -150, 1, 0)
+pagesContainer.Position = UDim2.fromOffset(150, 0)
+pagesContainer.BackgroundTransparency = 1
+pagesContainer.Parent = bodyFrame
+
+local function createPage(): ScrollingFrame
+    local page = Instance.new("ScrollingFrame")
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 4
+    page.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 120)
+    page.CanvasSize = UDim2.fromOffset(0, 0)
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.Visible = false
+    page.Parent = pagesContainer
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingTop = UDim.new(0, 12)
+    padding.PaddingBottom = UDim.new(0, 14)
+    padding.PaddingLeft = UDim.new(0, 14)
+    padding.PaddingRight = UDim.new(0, 14)
+    padding.Parent = page
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = page
+
+    return page
+end
+
+local giftPage = createPage()
+giftPage.Visible = true
+local playerPage = createPage()
+
+-- Nút chuyển Tab trên Sidebar
+local function createTabBtn(text: string, order: number, targetPage: ScrollingFrame, isDefault: boolean): TextButton
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -16, 0, 36)
+    btn.Position = UDim2.fromOffset(8, 12 + (order - 1) * 44)
+    btn.BackgroundColor3 = isDefault and Color3.fromRGB(255, 175, 40) or Color3.fromRGB(34, 34, 44)
+    btn.TextColor3 = isDefault and Color3.fromRGB(20, 20, 25) or Color3.fromRGB(210, 210, 225)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.Text = text
+    btn.Parent = sidebar
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = btn
+
+    return btn
+end
+
+local tab1Btn = createTabBtn("🎁 Auto Mở Quà", 1, giftPage, true)
+local tab2Btn = createTabBtn("⚡ Nhân Vật & AFK", 2, playerPage, false)
+
+local function switchTab(activeBtn: TextButton, activePage: ScrollingFrame)
+    giftPage.Visible = (activePage == giftPage)
+    playerPage.Visible = (activePage == playerPage)
+
+    for _, btn in ipairs({ tab1Btn, tab2Btn }) do
+        local isCurrent = (btn == activeBtn)
+        btn.BackgroundColor3 = isCurrent and Color3.fromRGB(255, 175, 40) or Color3.fromRGB(34, 34, 44)
+        btn.TextColor3 = isCurrent and Color3.fromRGB(20, 20, 25) or Color3.fromRGB(210, 210, 225)
+    end
+end
+
+tab1Btn.MouseButton1Click:Connect(function() switchTab(tab1Btn, giftPage) end)
+tab2Btn.MouseButton1Click:Connect(function() switchTab(tab2Btn, playerPage) end)
+
+-- Nhãn hướng dẫn góc dưới Sidebar
+local sideHint = Instance.new("TextLabel")
+sideHint.Size = UDim2.new(1, -16, 0, 75)
+sideHint.Position = UDim2.new(0, 8, 1, -82)
+sideHint.BackgroundTransparency = 1
+sideHint.Font = Enum.Font.Gotham
+sideHint.TextSize = 11
+sideHint.TextColor3 = Color3.fromRGB(145, 145, 165)
+sideHint.TextWrapped = true
+sideHint.TextXAlignment = Enum.TextXAlignment.Left
+sideHint.Text = "💡 Mẹo:\n• Giữ chuột kéo bất kỳ đâu để di chuyển.\n• Phím tắt: RightCtrl"
+sideHint.Parent = sidebar
+
+-- ================= CÁC COMPONENT UI TRONG TRANG =================
+
+local function createToggle(parent: Instance, order: number, titleText: string, defaultVal: boolean, callback: (boolean) -> ())
+    local row = Instance.new("Frame")
+    row.LayoutOrder = order
+    row.Size = UDim2.new(1, 0, 0, 40)
+    row.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    row.Parent = parent
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = row
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -70, 1, 0)
+    lbl.Position = UDim2.fromOffset(12, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 13
+    lbl.TextColor3 = Color3.fromRGB(235, 235, 245)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = titleText
+    lbl.Parent = row
+
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.fromOffset(46, 24)
+    toggleBtn.Position = UDim2.new(1, -56, 0.5, -12)
+    toggleBtn.BackgroundColor3 = defaultVal and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(65, 65, 80)
+    toggleBtn.Text = ""
+    toggleBtn.Parent = row
+
+    local tCorner = Instance.new("UICorner")
+    tCorner.CornerRadius = UDim.new(1, 0)
+    tCorner.Parent = toggleBtn
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(18, 18)
+    knob.Position = defaultVal and UDim2.fromOffset(25, 3) or UDim2.fromOffset(3, 3)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.Parent = toggleBtn
+
+    local kCorner = Instance.new("UICorner")
+    kCorner.CornerRadius = UDim.new(1, 0)
+    kCorner.Parent = knob
+
+    local currentVal = defaultVal
+    local function setVal(newVal: boolean)
+        currentVal = newVal
+        toggleBtn.BackgroundColor3 = currentVal and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(65, 65, 80)
+        TweenService:Create(knob, TweenInfo.new(0.15), {
+            Position = currentVal and UDim2.fromOffset(25, 3) or UDim2.fromOffset(3, 3)
+        }):Play()
+        callback(currentVal)
+    end
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        setVal(not currentVal)
+    end)
+
+    return setVal
+end
+
+local function createStepper(parent: Instance, order: number, titleText: string, minVal: number, maxVal: number, stepVal: number, defaultVal: number, formatFunc: (number) -> string, callback: (number) -> ())
+    local row = Instance.new("Frame")
+    row.LayoutOrder = order
+    row.Size = UDim2.new(1, 0, 0, 40)
+    row.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    row.Parent = parent
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = row
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -135, 1, 0)
+    lbl.Position = UDim2.fromOffset(12, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 13
+    lbl.TextColor3 = Color3.fromRGB(235, 235, 245)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = titleText
+    lbl.Parent = row
+
+    local minusBtn = Instance.new("TextButton")
+    minusBtn.Size = UDim2.fromOffset(28, 26)
+    minusBtn.Position = UDim2.new(1, -118, 0.5, -13)
+    minusBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    minusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minusBtn.Font = Enum.Font.GothamBold
+    minusBtn.TextSize = 16
+    minusBtn.Text = "-"
+    minusBtn.Parent = row
+
+    local mCorner = Instance.new("UICorner")
+    mCorner.CornerRadius = UDim.new(0, 6)
+    mCorner.Parent = minusBtn
+
+    local valLabel = Instance.new("TextLabel")
+    valLabel.Size = UDim2.fromOffset(50, 26)
+    valLabel.Position = UDim2.new(1, -88, 0.5, -13)
+    valLabel.BackgroundTransparency = 1
+    valLabel.Font = Enum.Font.GothamBold
+    valLabel.TextSize = 13
+    valLabel.TextColor3 = Color3.fromRGB(255, 200, 60)
+    valLabel.Text = formatFunc(defaultVal)
+    valLabel.Parent = row
+
+    local plusBtn = Instance.new("TextButton")
+    plusBtn.Size = UDim2.fromOffset(28, 26)
+    plusBtn.Position = UDim2.new(1, -36, 0.5, -13)
+    plusBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    plusBtn.Font = Enum.Font.GothamBold
+    plusBtn.TextSize = 16
+    plusBtn.Text = "+"
+    plusBtn.Parent = row
+
+    local pCorner = Instance.new("UICorner")
+    pCorner.CornerRadius = UDim.new(0, 6)
+    pCorner.Parent = plusBtn
+
+    local cur = defaultVal
+    local function updateVal(delta: number)
+        cur = math.clamp(math.round((cur + delta) * 100) / 100, minVal, maxVal)
+        valLabel.Text = formatFunc(cur)
+        callback(cur)
+    end
+
+    minusBtn.MouseButton1Click:Connect(function() updateVal(-stepVal) end)
+    plusBtn.MouseButton1Click:Connect(function() updateVal(stepVal) end)
+end
+
+-- ================= TRANG 1: AUTO MỞ QUÀ =================
+
+-- Thẻ hiển thị trạng thái trực tiếp
+local statusCard = Instance.new("Frame")
+statusCard.LayoutOrder = 1
+statusCard.Size = UDim2.new(1, 0, 0, 64)
+statusCard.BackgroundColor3 = Color3.fromRGB(32, 34, 46)
+statusCard.Parent = giftPage
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 8)
+statusCorner.Parent = statusCard
+
+local statusStroke = Instance.new("UIStroke")
+statusStroke.Color = Color3.fromRGB(255, 175, 40)
+statusStroke.Thickness = 1
+statusStroke.Parent = statusCard
+
+local statusTitle = Instance.new("TextLabel")
+statusTitle.Size = UDim2.new(1, -20, 0, 22)
+statusTitle.Position = UDim2.fromOffset(10, 6)
+statusTitle.BackgroundTransparency = 1
+statusTitle.Font = Enum.Font.GothamBold
+statusTitle.TextSize = 13
+statusTitle.TextColor3 = Color3.fromRGB(255, 205, 65)
+statusTitle.TextXAlignment = Enum.TextXAlignment.Left
+statusTitle.Text = "⚪ TRẠNG THÁI: ĐANG TẠM DỪNG"
+statusTitle.Parent = statusCard
+
+local statusSub = Instance.new("TextLabel")
+statusSub.Size = UDim2.new(1, -20, 0, 32)
+statusSub.Position = UDim2.fromOffset(10, 28)
+statusSub.BackgroundTransparency = 1
+statusSub.Font = Enum.Font.Gotham
+statusSub.TextSize = 12
+statusSub.TextColor3 = Color3.fromRGB(210, 210, 225)
+statusSub.TextXAlignment = Enum.TextXAlignment.Left
+statusSub.TextYAlignment = Enum.TextYAlignment.Top
+statusSub.TextWrapped = true
+statusSub.Text = "Đang kiểm tra kho đồ..."
+statusSub.Parent = statusCard
 
 local function updateStatusDisplay()
     local uid, amount, cat = getGiftInfo(state.targetGiftName)
-    local statusText = state.autoOpen and "🟢 ĐANG CHẠY AUTO" or "⚪ ĐANG TẠM DỪNG"
-    local bodyText = string.format(
-        "Hộp quà: %s [%s] | Trong túi còn: %d | Đã mở: %d hộp\nUID: %s",
+    statusTitle.Text = state.autoOpen and "🟢 TRẠNG THÁI: ĐANG MỞ QUÀ TỰ ĐỘNG" or "⚪ TRẠNG THÁI: ĐANG TẠM DỪNG"
+    statusTitle.TextColor3 = state.autoOpen and Color3.fromRGB(80, 235, 130) or Color3.fromRGB(255, 205, 65)
+    statusSub.Text = string.format(
+        "Hộp quà: %s (%s)  |  Trong túi còn: %d  |  Đã mở: %d\nUID: %s",
         state.targetGiftName,
         tostring(cat or "Chưa thấy"),
         amount,
         state.totalOpenedSession,
         tostring(uid or "Không có")
     )
-    pcall(function()
-        StatusParagraph:SetTitle(statusText)
-        StatusParagraph:SetDesc(bodyText)
-    end)
 end
 
-local GiftSection = GiftTab:Section({
-    Title = "Điều Khiển Mở Hộp Quà"
-})
-
-local initialGiftList = scanAvailableGiftsInBag()
-local defaultGift = "Midnight Gift"
-for _, name in ipairs(initialGiftList) do
+-- Bộ chọn Hộp Quà trong túi
+local giftList = scanAvailableGiftsInBag()
+local giftIndex = 1
+for idx, name in ipairs(giftList) do
     if string.lower(name) == "midnight gift" then
-        defaultGift = name
+        giftIndex = idx
         state.targetGiftName = name
         break
     end
 end
 
-local GiftDropdown = GiftSection:Dropdown({
-    Title = "Chọn Hộp Quà Trong Túi",
-    Values = initialGiftList,
-    Value = defaultGift,
-    Callback = function(selectedName)
-        if type(selectedName) == "string" and #selectedName > 0 then
-            state.targetGiftName = selectedName
-            cachedUid, cachedCategory, cachedDirData = nil, nil, nil
-            updateStatusDisplay()
-            WindUI:Notify({
-                Title = "Duckky Hub",
-                Content = "Đã chọn hộp quà: " .. selectedName,
-                Duration = 2,
-                Icon = "gift"
-            })
-        end
+local selectorRow = Instance.new("Frame")
+selectorRow.LayoutOrder = 2
+selectorRow.Size = UDim2.new(1, 0, 0, 42)
+selectorRow.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+selectorRow.Parent = giftPage
+
+local selCorner = Instance.new("UICorner")
+selCorner.CornerRadius = UDim.new(0, 8)
+selCorner.Parent = selectorRow
+
+local prevGiftBtn = Instance.new("TextButton")
+prevGiftBtn.Size = UDim2.fromOffset(30, 28)
+prevGiftBtn.Position = UDim2.fromOffset(8, 7)
+prevGiftBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+prevGiftBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+prevGiftBtn.Font = Enum.Font.GothamBold
+prevGiftBtn.TextSize = 13
+prevGiftBtn.Text = "<"
+prevGiftBtn.Parent = selectorRow
+
+local prevCorner = Instance.new("UICorner")
+prevCorner.CornerRadius = UDim.new(0, 6)
+prevCorner.Parent = prevGiftBtn
+
+local giftNameLabel = Instance.new("TextLabel")
+giftNameLabel.Size = UDim2.new(1, -155, 1, 0)
+giftNameLabel.Position = UDim2.fromOffset(44, 0)
+giftNameLabel.BackgroundTransparency = 1
+giftNameLabel.Font = Enum.Font.GothamBold
+giftNameLabel.TextSize = 13
+giftNameLabel.TextColor3 = Color3.fromRGB(255, 215, 75)
+giftNameLabel.Text = "🎁 " .. state.targetGiftName
+giftNameLabel.Parent = selectorRow
+
+local nextGiftBtn = Instance.new("TextButton")
+nextGiftBtn.Size = UDim2.fromOffset(30, 28)
+nextGiftBtn.Position = UDim2.new(1, -106, 0, 7)
+nextGiftBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+nextGiftBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+nextGiftBtn.Font = Enum.Font.GothamBold
+nextGiftBtn.TextSize = 13
+nextGiftBtn.Text = ">"
+nextGiftBtn.Parent = selectorRow
+
+local nextCorner = Instance.new("UICorner")
+nextCorner.CornerRadius = UDim.new(0, 6)
+nextCorner.Parent = nextGiftBtn
+
+local scanBtn = Instance.new("TextButton")
+scanBtn.Size = UDim2.fromOffset(64, 28)
+scanBtn.Position = UDim2.new(1, -70, 0, 7)
+scanBtn.BackgroundColor3 = Color3.fromRGB(60, 130, 220)
+scanBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+scanBtn.Font = Enum.Font.GothamBold
+scanBtn.TextSize = 12
+scanBtn.Text = "🔄 Quét"
+scanBtn.Parent = selectorRow
+
+local scanCorner = Instance.new("UICorner")
+scanCorner.CornerRadius = UDim.new(0, 6)
+scanCorner.Parent = scanBtn
+
+local function applyGiftSelection()
+    state.targetGiftName = giftList[giftIndex] or "Midnight Gift"
+    cachedUid, cachedCategory, cachedDirData = nil, nil, nil
+    giftNameLabel.Text = "🎁 " .. state.targetGiftName
+    updateStatusDisplay()
+end
+
+prevGiftBtn.MouseButton1Click:Connect(function()
+    giftIndex = giftIndex - 1
+    if giftIndex < 1 then giftIndex = #giftList end
+    applyGiftSelection()
+end)
+
+nextGiftBtn.MouseButton1Click:Connect(function()
+    giftIndex = giftIndex + 1
+    if giftIndex > #giftList then giftIndex = 1 end
+    applyGiftSelection()
+end)
+
+scanBtn.MouseButton1Click:Connect(function()
+    giftList = scanAvailableGiftsInBag()
+    giftIndex = 1
+    applyGiftSelection()
+end)
+
+-- Công tắc Auto Mở Quà
+local setAutoOpenToggle = createToggle(giftPage, 3, "🚀 Bật Auto Mở Hộp Quà Liên Tục", false, function(val)
+    state.autoOpen = val
+    updateStatusDisplay()
+end)
+
+-- Chỉnh số lượng hộp mỗi đợt
+createStepper(giftPage, 4, "📦 Số Hộp Mở Mỗi Đợt (1 - 8)", 1, 8, 1, 8, function(v)
+    return tostring(math.floor(v)) .. " hộp"
+end, function(v)
+    state.maxAmountPerOpen = math.clamp(math.floor(v), 1, 8)
+end)
+
+-- Chỉnh thời gian nghỉ
+createStepper(giftPage, 5, "⏱️ Thời Gian Nghỉ Mỗi Đợt", 0.5, 5.0, 0.25, 1.5, function(v)
+    return string.format("%.2fs", v)
+end, function(v)
+    state.delayTime = v
+end)
+
+-- Tối ưu chống lag
+createToggle(giftPage, 6, "🧹 Xóa Hiệu Ứng Nổ & Âm Thanh (Chống Lag)", true, function(val)
+    state.clearLagEffects = val
+end)
+
+createToggle(giftPage, 7, "🙈 Tự Động Ẩn GUI Mở Quà", true, function(val)
+    state.hideGiftGui = val
+end)
+
+-- Nút kích nổ nhanh
+local popNowBtn = Instance.new("TextButton")
+popNowBtn.LayoutOrder = 8
+popNowBtn.Size = UDim2.new(1, 0, 0, 38)
+popNowBtn.BackgroundColor3 = Color3.fromRGB(230, 126, 34)
+popNowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+popNowBtn.Font = Enum.Font.GothamBold
+popNowBtn.TextSize = 13
+popNowBtn.Text = "⚡ Kích Nổ Hộp Quà Dưới Đất Ngay"
+popNowBtn.Parent = giftPage
+
+local popCorner = Instance.new("UICorner")
+popCorner.CornerRadius = UDim.new(0, 8)
+popCorner.Parent = popNowBtn
+
+popNowBtn.MouseButton1Click:Connect(function()
+    if type(PresentCmds.OpenCurrent) == "function" then
+        pcall(PresentCmds.OpenCurrent)
     end
-})
+end)
 
-GiftSection:Button({
-    Title = "🔄 Làm Mới Danh Sách Hộp Quà",
-    Desc = "Quét lại túi đồ để cập nhật hộp quà mới nhận",
-    Callback = function()
-        local newList = scanAvailableGiftsInBag()
-        pcall(function()
-            if GiftDropdown.SetValues then
-                GiftDropdown:SetValues(newList)
-            end
-        end)
-        updateStatusDisplay()
-        WindUI:Notify({
-            Title = "Duckky Hub",
-            Content = "Đã quét lại túi đồ (" .. tostring(#newList) .. " vật phẩm)!",
-            Duration = 2,
-            Icon = "refresh-cw"
-        })
+-- ================= TRANG 2: NHÂN VẬT & AFK =================
+
+createToggle(playerPage, 1, "🛡️ Chống Kick AFK 20 Phút", true, function(val)
+    state.antiAfk = val
+end)
+
+createStepper(playerPage, 2, "🏃 Tốc Độ Chạy (WalkSpeed)", 16, 150, 8, 16, function(v)
+    return tostring(math.floor(v))
+end, function(v)
+    state.walkSpeed = v
+    local char = localPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed = v end
+end)
+
+createStepper(playerPage, 3, "🦘 Độ Cao Nhảy (JumpPower)", 50, 200, 10, 50, function(v)
+    return tostring(math.floor(v))
+end, function(v)
+    state.jumpPower = v
+    local char = localPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.UseJumpPower = true
+        hum.JumpPower = v
     end
-})
-
-GiftSection:Toggle({
-    Title = "🚀 Bật Auto Mở Hộp Quà Liên Tục",
-    Desc = "Tự động mở và kích nổ liên tục cho đến khi hết quà",
-    Value = false,
-    Callback = function(value)
-        state.autoOpen = value
-        updateStatusDisplay()
-        WindUI:Notify({
-            Title = "Duckky Hub",
-            Content = (value and "Đã BẬT " or "Đã TẮT ") .. "Auto mở: " .. state.targetGiftName,
-            Duration = 2,
-            Icon = value and "play" or "square"
-        })
-    end
-})
-
-GiftSection:Slider({
-    Title = "Số Hộp Mở Mỗi Đợt",
-    Desc = "Tối đa 8 hộp/lần",
-    Step = 1,
-    Value = { Min = 1, Max = 8, Default = 8 },
-    Callback = function(val)
-        state.maxAmountPerOpen = math.clamp(math.floor(val), 1, 8)
-    end
-})
-
-GiftSection:Slider({
-    Title = "Thời Gian Nghỉ (x0.1 Giây)",
-    Desc = "15 = 1.5 giây (ổn định nhất)",
-    Step = 1,
-    Value = { Min = 5, Max = 50, Default = 15 },
-    Callback = function(val)
-        state.delayTime = math.clamp(val / 10, 0.5, 5.0)
-    end
-})
-
-local OptSection = GiftTab:Section({
-    Title = "Tối Ưu & Tiện Ích"
-})
-
-OptSection:Toggle({
-    Title = "🧹 Xóa Hiệu Ứng Nổ & Âm Thanh (Chống Crash)",
-    Value = true,
-    Callback = function(value)
-        state.clearLagEffects = value
-    end
-})
-
-OptSection:Toggle({
-    Title = "🙈 Tự Động Ẩn GUI Hiệu Ứng Mở Quà",
-    Value = true,
-    Callback = function(value)
-        state.hideGiftGui = value
-    end
-})
-
-OptSection:Button({
-    Title = "⚡ Kích Nổ Hộp Quà Dưới Đất Ngay",
-    Desc = "Mở ngay các hộp quà đang kẹt trên mặt đất",
-    Callback = function()
-        if type(PresentCmds.OpenCurrent) == "function" then
-            pcall(PresentCmds.OpenCurrent)
-        end
-        WindUI:Notify({
-            Title = "Duckky Hub",
-            Content = "Đã gửi lệnh kích nổ các hộp quà!",
-            Duration = 2,
-            Icon = "zap"
-        })
-    end
-})
-
--- ================= TAB 2: NHÂN VẬT & AFK =================
-local PlayerSection = PlayerTab:Section({
-    Title = "Tiện Ích Treo Máy"
-})
-
-PlayerSection:Toggle({
-    Title = "🛡️ Chống Kick AFK 20 Phút",
-    Value = true,
-    Callback = function(value)
-        state.antiAfk = value
-    end
-})
-
-PlayerSection:Paragraph({
-    Title = "Hướng Dẫn Bật / Tắt Menu",
-    Desc = "• Bấm nút [-] hoặc [x] trên thanh tiêu đề để thu nhỏ/đóng menu.\n• Click vào nút nổi '🦆 Duckky Hub' trên màn hình hoặc bấm phím RightControl (Ctrl Phải) để mở lại bất cứ lúc nào!\n• Nhấn giữ chuột bất kỳ đâu trên thanh tiêu đề để kéo di chuyển menu."
-})
-
-local StatsSection = PlayerTab:Section({
-    Title = "Chỉ Số Nhân Vật"
-})
-
-StatsSection:Slider({
-    Title = "Tốc Độ Chạy (WalkSpeed)",
-    Step = 1,
-    Value = { Min = 16, Max = 150, Default = 16 },
-    Callback = function(val)
-        local char = localPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.WalkSpeed = val
-        end
-    end
-})
-
-StatsSection:Slider({
-    Title = "Độ Cao Nhảy (JumpPower)",
-    Step = 1,
-    Value = { Min = 50, Max = 200, Default = 50 },
-    Callback = function(val)
-        local char = localPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.UseJumpPower = true
-            hum.JumpPower = val
-        end
-    end
-})
+end)
 
 -- ================= VÒNG LẶP XỬ LÝ NGẦM =================
 task.spawn(function()
     local connections = {}
 
-    local playerGui = localPlayer:FindFirstChild("PlayerGui")
     if playerGui then
         table.insert(connections, playerGui.ChildAdded:Connect(checkAndHideGui))
     end
@@ -437,19 +916,13 @@ task.spawn(function()
 
     updateStatusDisplay()
 
-    while _G.AutoGiftSession == currentSession do
+    while _G.AutoGiftSession == currentSession and screenGui.Parent do
         if state.autoOpen then
             local giftUid, currentAmount = getGiftInfo(state.targetGiftName)
 
             if not giftUid or currentAmount <= 0 then
-                state.autoOpen = false
+                setAutoOpenToggle(false)
                 updateStatusDisplay()
-                WindUI:Notify({
-                    Title = "Duckky Hub",
-                    Content = "🎉 Đã mở hết sạch '" .. state.targetGiftName .. "' trong túi đồ!",
-                    Duration = 5,
-                    Icon = "check-circle"
-                })
             else
                 local amountToOpen = math.min(state.maxAmountPerOpen, currentAmount)
                 local itemObj = makeItemObject(giftUid, state.targetGiftName)
