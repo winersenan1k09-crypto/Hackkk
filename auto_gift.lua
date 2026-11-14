@@ -24,25 +24,26 @@ local currentSession = _G.AutoGiftSession
 local rng = Random.new()
 local cachedUid = nil
 local cachedCategory = nil
-local cachedItemData = nil
 
-local learnedCall = nil -- Lưu hàm/remote bắt được khi người chơi bấm mở tay
+local PresentCmds = nil
+local LootboxCmds = nil
+pcall(function() PresentCmds = require(clientFolder:FindFirstChild("PresentCmds")) end)
+pcall(function() LootboxCmds = require(clientFolder:FindFirstChild("LootboxCmds")) end)
 
--- 1. Tìm UID và thông tin của Midnight Gift trong túi đồ
+-- 1. Tìm UID và số lượng của Midnight Gift trong túi
 local function getGiftInfo(giftName)
     local saveData = Save.Get()
     if not saveData or not saveData.Inventory then
-        return nil, 0, nil, nil
+        return nil, 0, nil
     end
 
     if cachedCategory and cachedUid then
         local categoryTable = saveData.Inventory[cachedCategory]
         local itemData = categoryTable and categoryTable[cachedUid]
         if itemData then
-            cachedItemData = itemData
-            return cachedUid, (itemData._am or 1), cachedCategory, itemData
+            return cachedUid, (itemData._am or 1), cachedCategory
         else
-            cachedUid, cachedCategory, cachedItemData = nil, nil, nil
+            cachedUid, cachedCategory = nil, nil
         end
     end
 
@@ -53,174 +54,122 @@ local function getGiftInfo(giftName)
                 if type(itemData) == "table" and itemData.id and string.lower(tostring(itemData.id)) == targetLower then
                     cachedUid = uid
                     cachedCategory = categoryName
-                    cachedItemData = itemData
-                    return uid, (itemData._am or 1), categoryName, itemData
+                    return uid, (itemData._am or 1), categoryName
                 end
             end
         end
     end
 
-    return nil, 0, nil, nil
+    return nil, 0, nil
 end
 
--- 2. In ra cấu trúc tham số để kiểm tra
-local function formatArgs(args)
-    local parts = {}
-    for i, v in ipairs(args) do
-        if typeof(v) == "table" then
-            local count = 0
-            local firstElem = nil
-            for k, sub in pairs(v) do
-                count = count + 1
-                if count == 1 then
-                    firstElem = tostring(k) .. "=" .. tostring(sub) .. "(" .. typeof(sub) .. ")"
-                end
-            end
-            table.insert(parts, string.format("[%d]=Table(len=%d, %s)", i, count, tostring(firstElem)))
-        else
-            table.insert(parts, string.format("[%d]=%s(%s)", i, tostring(v), typeof(v)))
-        end
-    end
-    return table.concat(parts, ", ")
-end
+-- 2. Giải mã chi tiết PresentCmds và LootboxCmds để lấy đúng quy trình mở liên tục
+local function inspectPresentAndLootboxModules()
+    print("=== [AutoGift v5] PHÂN TÍCH PRESENTCMDS & LOOTBOXCMDS ===")
 
--- 3. Quét tất cả Module và Remote liên quan đến mở quà trong game
-local foundGiftRemotes = {}
-local foundClientModules = {}
-
-local function scanGameGiftApis()
-    print("=== [AutoGift] ĐANG QUÉT API MỞ QUÀ TRONG GAME ===")
-    local keywords = { "gift", "lootbox", "box", "bag", "open", "release", "present", "consume", "use", "roll", "kx" }
-
+    -- In tất cả Remote có chữ KX, Present, Gift, Lootbox
     for _, rem in ipairs(network:GetChildren()) do
-        local nameLower = string.lower(rem.Name)
-        for _, kw in ipairs(keywords) do
-            if string.find(nameLower, kw) then
-                table.insert(foundGiftRemotes, rem)
-                print(string.format("  [Remote] %s (%s)", rem.Name, rem.ClassName))
-                break
+        local nl = string.lower(rem.Name)
+        if string.find(nl, "kx") or string.find(nl, "present") or string.find(nl, "gift") or string.find(nl, "lootbox") then
+            print(string.format("  [Remote] '%s' (%s)", rem.Name, rem.ClassName))
+        end
+    end
+
+    -- Thử decompile nếu công cụ hỗ trợ
+    if decompile then
+        local pMod = clientFolder:FindFirstChild("PresentCmds")
+        if pMod then
+            local ok, src = pcall(decompile, pMod)
+            if ok and type(src) == "string" and #src > 0 then
+                print("--- MÃ NGUỒN PRESENTCMDS ---")
+                for line in string.gmatch(src, "[^\r\n]+") do
+                    if string.find(line, "Network") or string.find(line, "Invoke") or string.find(line, "Fire") or string.find(line, "function") or string.find(line, "KX") or string.find(line, "Open") or string.find(line, "Drop") then
+                        print("  " .. line)
+                    end
+                end
             end
         end
     end
 
-    for _, mod in ipairs(clientFolder:GetChildren()) do
-        if mod:IsA("ModuleScript") then
-            local nameLower = string.lower(mod.Name)
-            for _, kw in ipairs(keywords) do
-                if string.find(nameLower, kw) then
-                    local ok, req = pcall(require, mod)
-                    if ok and type(req) == "table" then
-                        foundClientModules[mod.Name] = req
-                        local funcs = {}
-                        for k, v in pairs(req) do
-                            if type(v) == "function" then
-                                table.insert(funcs, tostring(k))
+    -- Đọc Constants & Upvalues của PresentCmds
+    if PresentCmds and type(PresentCmds) == "table" then
+        for funcName, fn in pairs(PresentCmds) do
+            if type(fn) == "function" then
+                local infoStr = "  [PresentCmds." .. tostring(funcName) .. "]"
+                if debug and debug.getconstants then
+                    local okC, consts = pcall(debug.getconstants, fn)
+                    if okC and type(consts) == "table" then
+                        local list = {}
+                        for _, c in pairs(consts) do
+                            if type(c) == "string" or type(c) == "number" then
+                                table.insert(list, tostring(c))
                             end
                         end
-                        print(string.format("  [Module] %s -> Các hàm: %s", mod.Name, table.concat(funcs, ", ")))
+                        infoStr = infoStr .. " Constants: " .. table.concat(list, ", ")
                     end
-                    break
                 end
+                print(infoStr)
             end
         end
     end
-    print("===================================================")
-end
 
--- 4. Bắt mọi lệnh gửi đi khi người chơi bấm mở quà bằng tay (Cả Lua Network lẫn __namecall)
-local ignoredRemotes = {
-    ["Idle"] = true, ["Click"] = true, ["Orbs"] = true, ["Breakables"] = true,
-    ["Pets"] = true, ["Player"] = true, ["Ping"] = true, ["Stat"] = true
-}
-
-local function isSpamRemote(name)
-    local lower = string.lower(name)
-    for k in pairs(ignoredRemotes) do
-        if string.find(lower, string.lower(k)) then
-            return true
-        end
-    end
-    return false
-end
-
-local function setupSpyHooks()
-    -- Cách A: Hook trực tiếp vào Module Network của Pet Simulator 99 (Không cần hookmetamethod)
-    local netModObj = clientFolder:FindFirstChild("Network")
-    if netModObj then
-        local ok, netMod = pcall(require, netModObj)
-        if ok and type(netMod) == "table" then
-            pcall(function()
-                local oldInvoke = netMod.Invoke
-                if type(oldInvoke) == "function" then
-                    netMod.Invoke = function(remoteName, ...)
-                        local args = { ... }
-                        if not isSpamRemote(tostring(remoteName)) then
-                            warn(string.format("[Spy-Network.Invoke] Remote: '%s' | Args: %s", tostring(remoteName), formatArgs(args)))
-                            learnedCall = {
-                                type = "NetworkModule",
-                                method = "Invoke",
-                                func = oldInvoke,
-                                remoteName = remoteName,
-                                args = args
-                            }
-                        end
-                        return oldInvoke(remoteName, ...)
-                    end
-                    print("[AutoGift] Đã gắn bộ lắng nghe vào Library.Client.Network.Invoke!")
-                end
-
-                local oldFire = netMod.Fire
-                if type(oldFire) == "function" then
-                    netMod.Fire = function(remoteName, ...)
-                        local args = { ... }
-                        if not isSpamRemote(tostring(remoteName)) then
-                            warn(string.format("[Spy-Network.Fire] Remote: '%s' | Args: %s", tostring(remoteName), formatArgs(args)))
-                            if not learnedCall then
-                                learnedCall = {
-                                    type = "NetworkModule",
-                                    method = "Fire",
-                                    func = oldFire,
-                                    remoteName = remoteName,
-                                    args = args
-                                }
+    -- Đọc Constants của LootboxCmds
+    if LootboxCmds and type(LootboxCmds) == "table" then
+        for funcName, fn in pairs(LootboxCmds) do
+            if type(fn) == "function" then
+                local infoStr = "  [LootboxCmds." .. tostring(funcName) .. "]"
+                if debug and debug.getconstants then
+                    local okC, consts = pcall(debug.getconstants, fn)
+                    if okC and type(consts) == "table" then
+                        local list = {}
+                        for _, c in pairs(consts) do
+                            if type(c) == "string" or type(c) == "number" then
+                                table.insert(list, tostring(c))
                             end
                         end
-                        return oldFire(remoteName, ...)
+                        infoStr = infoStr .. " Constants: " .. table.concat(list, ", ")
                     end
                 end
-            end)
+                print(infoStr)
+            end
         end
     end
 
-    -- Cách B: Hook __namecall nếu công cụ chạy script có hỗ trợ
+    -- Gắn bộ theo dõi mọi lệnh gọi từ PresentCmds khi bạn mở quà
     if hookmetamethod and getnamecallmethod then
         pcall(function()
             local oldNamecall
             oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 local method = getnamecallmethod()
                 if (method == "InvokeServer" or method == "FireServer") and self.Parent == network then
-                    if not checkcaller or not checkcaller() then
+                    local nameL = string.lower(self.Name)
+                    if not string.find(nameL, "idle") and not string.find(nameL, "click") and not string.find(nameL, "orb") and not string.find(nameL, "breakable") and not string.find(nameL, "pet") and not string.find(nameL, "ping") then
                         local args = { ... }
-                        if not isSpamRemote(self.Name) then
-                            warn(string.format("[Spy-Namecall] Remote: '%s' (%s) | Args: %s", self.Name, method, formatArgs(args)))
-                            learnedCall = {
-                                type = "RemoteInstance",
-                                method = method,
-                                remote = self,
-                                args = args
-                            }
+                        local argSummary = {}
+                        for i, a in ipairs(args) do
+                            table.insert(argSummary, string.format("[%d]=%s(%s)", i, tostring(a), typeof(a)))
                         end
+                        warn(string.format("🔥 [BẮT GÓI TIN] Remote: '%s' (%s) | Args: %s", self.Name, method, table.concat(argSummary, ", ")))
                     end
                 end
                 return oldNamecall(self, ...)
             end)
-            print("[AutoGift] Đã gắn bộ lắng nghe __namecall!")
         end)
     end
+
+    print("=== [AutoGift v5] HOÀN TẤT PHÂN TÍCH ===")
 end
 
--- 5. Tạo tọa độ mặt đất quanh nhân vật
-local function generateGroundPositions(count, radius)
+-- 3. Tạo tọa độ chuẩn bằng chính hàm PresentCmds.Ground của game (nếu có) hoặc Raycast
+local function getDropVectors(count)
+    -- Thử dùng hàm tính mặt đất chính chủ của PresentCmds
+    if PresentCmds and type(PresentCmds.Ground) == "function" then
+        local ok, res = pcall(PresentCmds.Ground, count)
+        if ok and type(res) == "table" and #res == count and typeof(res[1]) == "Vector3" then
+            return res
+        end
+    end
+
     local positions = table.create(count)
     local character = localPlayer.Character
     local rootPart = character and character:FindFirstChild("HumanoidRootPart")
@@ -233,11 +182,9 @@ local function generateGroundPositions(count, radius)
     end
 
     for i = 1, count do
-        local offsetX = rng:NextNumber(-radius, radius)
-        local offsetZ = rng:NextNumber(-radius, radius)
-        local testOrigin = centerPos + Vector3.new(offsetX, 10, offsetZ)
-
-        local rayResult = Workspace:Raycast(testOrigin, Vector3.new(0, -50, 0), rayParams)
+        local offsetX = rng:NextNumber(-5, 5)
+        local offsetZ = rng:NextNumber(-5, 5)
+        local rayResult = Workspace:Raycast(centerPos + Vector3.new(offsetX, 10, offsetZ), Vector3.new(0, -50, 0), rayParams)
         if rayResult then
             positions[i] = rayResult.Position
         else
@@ -248,101 +195,78 @@ local function generateGroundPositions(count, radius)
     return positions
 end
 
--- 6. Thử mở quà qua các Module Client (LootboxCmds / GiftBagCmds) hoặc Remote đã bắt được
-local function attemptOpenGift(uid, giftName, amount, vectors)
-    -- Ưu tiên 1: Nếu đã bắt được lệnh từ thao tác bấm tay của người chơi
-    if learnedCall then
-        local argsCopy = table.clone(learnedCall.args)
-        for i, v in ipairs(argsCopy) do
-            if type(v) == "table" and typeof(v[1]) == "Vector3" then
-                argsCopy[i] = generateGroundPositions(#v, 6)
-            end
-        end
-
-        if learnedCall.type == "NetworkModule" then
-            local ok, res1, res2 = pcall(learnedCall.func, learnedCall.remoteName, unpack(argsCopy))
-            if ok and res1 ~= false then
-                return true, "Learned-Network:" .. tostring(learnedCall.remoteName)
-            end
-        elseif learnedCall.type == "RemoteInstance" then
-            local ok, res1, res2 = pcall(function()
-                if learnedCall.method == "InvokeServer" then
-                    return learnedCall.remote:InvokeServer(unpack(argsCopy))
-                else
-                    learnedCall.remote:FireServer(unpack(argsCopy))
-                    return true
+-- 4. Vô hiệu hóa hiệu ứng rơi mô hình quà (Ẩn GUI / 3D Model)
+local function disableDropAnimation()
+    if not _G.HideGiftGui then return end
+    if PresentCmds and type(PresentCmds) == "table" then
+        pcall(function()
+            if type(PresentCmds.DropModel) == "function" then
+                PresentCmds.DropModel = function(...)
+                    return
                 end
-            end)
-            if ok and res1 ~= false then
-                return true, "Learned-Remote:" .. tostring(learnedCall.remote.Name)
             end
-        end
+        end)
     end
-
-    -- Ưu tiên 2: Thử gọi qua Module LootboxCmds hoặc GiftBagCmds nếu có
-    for modName, modTable in pairs(foundClientModules) do
-        if type(modTable.Open) == "function" then
-            -- Thử truyền (giftName, amount) hoặc (uid, amount)
-            local ok1, res1 = pcall(modTable.Open, giftName, amount)
-            if ok1 and res1 ~= false and res1 ~= nil then
-                return true, modName .. ".Open(Name)"
-            end
-            local ok2, res2 = pcall(modTable.Open, uid, amount)
-            if ok2 and res2 ~= false and res2 ~= nil then
-                return true, modName .. ".Open(UID)"
-            end
-        end
-    end
-
-    -- Ưu tiên 3: Thử các Remote tìm thấy trong ReplicatedStorage.Network
-    for _, rem in ipairs(foundGiftRemotes) do
-        if rem:IsA("RemoteFunction") then
-            local ok1, r1 = pcall(rem.InvokeServer, rem, giftName, amount)
-            if ok1 and r1 == true then return true, rem.Name .. "(Name,Amt)" end
-
-            local ok2, r2 = pcall(rem.InvokeServer, rem, uid, amount)
-            if ok2 and r2 == true then return true, rem.Name .. "(UID,Amt)" end
-
-            local ok3, r3 = pcall(rem.InvokeServer, rem, uid, amount, vectors)
-            if ok3 and r3 == true then return true, rem.Name .. "(UID,Amt,Vec)" end
-
-            local ok4, r4 = pcall(rem.InvokeServer, rem, giftName, amount, vectors)
-            if ok4 and r4 == true then return true, rem.Name .. "(Name,Amt,Vec)" end
-        end
-    end
-
-    return false, "Waiting"
 end
 
 -- ================= KHỞI CHẠY =================
 task.spawn(function()
     local initialUid, initialAmount, initialCat = getGiftInfo(targetGiftName)
     print(string.format(
-        "[AutoGift] Phiên #%d | Quà: '%s' [%s] | UID: %s | Số lượng ban đầu: %d",
+        "[AutoGift v5] Phiên #%d | Quà: '%s' [%s] | UID: %s | Số lượng hiện tại: %d",
         currentSession, targetGiftName, tostring(initialCat), tostring(initialUid), initialAmount
     ))
 
-    scanGameGiftApis()
-    setupSpyHooks()
+    inspectPresentAndLootboxModules()
+    disableDropAnimation()
 
-    warn("👉 [AutoGift] HÃY MỞ BALO VÀ BẤM MỞ 1 HỘP 'Midnight Gift' BẰNG TAY ĐỂ XEM TÊN REMOTE TRONG ROBLOX OUTPUT!")
+    local openGiftRemote = network:FindFirstChild("KX_Release")
 
     while _G.AutoOpenGift and (_G.AutoGiftSession == currentSession) do
         local giftUid, currentAmount = getGiftInfo(targetGiftName)
 
         if not giftUid or currentAmount <= 0 then
-            print("[AutoGift] Đã mở hết sạch quà trong túi!")
+            print("[AutoGift v5] ĐÃ MỞ HẾT SẠCH QUÀ TRONG TÚI!")
             break
         end
 
         local amountToOpen = math.min(maxAmountPerOpen, currentAmount)
-        local groundVectors = generateGroundPositions(amountToOpen, 6)
+        local vectors = getDropVectors(amountToOpen)
 
-        local openedOk, methodUsed = attemptOpenGift(giftUid, targetGiftName, amountToOpen, groundVectors)
-        if openedOk then
-            print(string.format("[AutoGift] Mở thành công qua [%s] | Còn lại: %d", methodUsed, currentAmount))
+        -- BƯỚC 1: Nếu đang có hộp quà cũ nằm trên đất chưa nổ xong, gọi OpenCurrent() để nổ ngay lập tức!
+        if PresentCmds and type(PresentCmds.OpenCurrent) == "function" then
+            pcall(PresentCmds.OpenCurrent)
+        end
+
+        -- BƯỚC 2: Thả 8 hộp quà mới xuống đất (qua PresentCmds.Drop hoặc KX_Release)
+        local dropped = false
+        if PresentCmds and type(PresentCmds.Drop) == "function" then
+            local ok, res = pcall(PresentCmds.Drop, giftUid, amountToOpen, vectors)
+            if ok and res ~= false then
+                dropped = true
+            end
+        end
+
+        if not dropped and openGiftRemote then
+            local ok, res = pcall(function()
+                return openGiftRemote:InvokeServer(giftUid, amountToOpen, vectors)
+            end)
+            if ok and res ~= false then
+                dropped = true
+            end
+        end
+
+        -- BƯỚC 3: Đợi một nhịp ngắn rồi kích nổ luôn 8 hộp vừa thả để đợt sau không bị kẹt!
+        task.wait(0.4)
+        if PresentCmds and type(PresentCmds.OpenCurrent) == "function" then
+            pcall(PresentCmds.OpenCurrent)
         end
 
         task.wait(delayTime)
+
+        local _, newAmount = getGiftInfo(targetGiftName)
+        if newAmount < currentAmount then
+            print(string.format("✅ [AutoGift v5] Đã mở thêm %d hộp! Trong túi còn: %d", currentAmount - newAmount, newAmount))
+        end
     end
 end)
