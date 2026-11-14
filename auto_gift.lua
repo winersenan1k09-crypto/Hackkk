@@ -13,7 +13,7 @@ _G.ClearLagEffects = true
 local targetGiftName = _G.TargetGiftName or "Midnight Gift" -- Tên hộp quà muốn mở
 local remoteName = _G.RemoteName or "KX_Release"            -- Tên Remote chính
 local maxAmountPerOpen = _G.MaxAmountPerOpen or 8           -- Số hộp mở mỗi nhịp (game giới hạn tối đa 8 hộp/lần quăng)
-local delayTime = _G.DelayTime or 0.8                       -- Mở liên tục mỗi 0.8 giây cho đến khi hết sạch 952 hộp
+local delayTime = _G.DelayTime or 1.5                       -- Thời gian nghỉ 1.5 giây giữa mỗi đợt mở để ổn định, tránh lỗi Server
 -- ============================================
 
 local openGiftRemote = network:WaitForChild(remoteName, 10)
