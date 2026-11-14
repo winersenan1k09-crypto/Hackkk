@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
 
 local localPlayer = Players.LocalPlayer
@@ -174,20 +175,110 @@ local function checkAndHideGui(gui)
     end
 end
 
--- ================= KHỞI TẠO GIAO DIỆN MACLIB =================
+-- ================= KHỞI TẠO GIAO DIỆN DUCKKY HUB (MACLIB) =================
 local loadCode = loadstring :: any
 local MacLib = loadCode((game :: any):HttpGet("https://github.com/biggaboy212/Maclib/releases/latest/download/maclib.txt"))()
 
+-- Cấu hình Window với Title Duckky Hub, DragStyle = 2 (kéo ở bất kỳ vị trí nào trên menu)
 local Window = MacLib:Window({
-    Title = "Reallloween Hub",
-    Subtitle = "Pet Simulator 99 | Auto Gift & Utilities",
+    Title = "Duckky Hub",
+    Subtitle = "Pet Simulator 99 | Auto Gift & Hub",
     Size = UDim2.fromOffset(820, 560),
-    DragStyle = 1,
-    DisabledWindowControls = {},
+    DragStyle = 2, -- Giữ trỏ bất kỳ đâu trên thanh/bảng menu để di chuyển
+    DisabledWindowControls = {}, -- Bật đầy đủ 3 nút traffic lights: Đỏ (x - đóng/ẩn) và Vàng (- thu nhỏ)
     ShowUserInfo = true,
     Keybind = Enum.KeyCode.RightControl,
     AcrylicBlur = true,
 })
+
+-- Tạo nút bấm nổi (Floating Button) trên màn hình để mở/thu nhỏ nhanh bằng 1 click
+local function createFloatingToggleButton()
+    local guiParent = nil
+    pcall(function()
+        guiParent = game:GetService("CoreGui")
+    end)
+    if not guiParent then
+        guiParent = localPlayer:WaitForChild("PlayerGui")
+    end
+
+    local existing = guiParent:FindFirstChild("DuckkyHub_ToggleBtn")
+    if existing then existing:Destroy() end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "DuckkyHub_ToggleBtn"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local btn = Instance.new("TextButton")
+    btn.Name = "ToggleButton"
+    btn.Size = UDim2.fromOffset(130, 38)
+    btn.Position = UDim2.new(0, 20, 0.5, -19)
+    btn.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Text = "🦆 Duckky Hub"
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.AutoButtonColor = true
+    btn.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 170, 0)
+    stroke.Thickness = 1.5
+    stroke.Parent = btn
+
+    -- Kéo thả nút bấm nổi tự do trên màn hình
+    local dragging = false
+    local dragInput, dragStart, startPos
+
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = btn.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    btn.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            btn.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    -- Khi bấm vào nút nổi: Bật / Tắt Menu
+    btn.MouseButton1Click:Connect(function()
+        local curState = Window:GetState()
+        Window:SetState(not curState)
+    end)
+
+    pcall(function()
+        screenGui.Parent = guiParent
+    end)
+
+    return screenGui
+end
+
+local floatGui = createFloatingToggleButton()
 
 Window:GlobalSetting({
     Name = "Hiệu ứng kính mờ (UI Blur)",
@@ -280,7 +371,7 @@ local giftDropdown = sections.GiftLeft:Dropdown({
             cachedUid, cachedCategory, cachedDirData = nil, nil, nil
             updateStatusDisplay()
             Window:Notify({
-                Title = "Reallloween Hub",
+                Title = "Duckky Hub",
                 Description = "Đã chọn hộp quà: " .. selectedName,
                 Lifetime = 3
             })
@@ -298,15 +389,12 @@ sections.GiftLeft:Button({
         end)
         updateStatusDisplay()
         Window:Notify({
-            Title = "Reallloween Hub",
+            Title = "Duckky Hub",
             Description = "Đã quét lại túi đồ (" .. tostring(#newList) .. " vật phẩm)!",
             Lifetime = 3
         })
     end,
 })
-
--- sections.GiftLeft:Input({ ... }) được bỏ qua do hàm checkSize của Input trong Maclib bị xung đột capability với bản Roblox mới.
--- Dropdown bên trên đã quét và liệt kê đầy đủ 100% tất cả các loại hộp quà trong túi rồi (hỗ trợ tìm kiếm Search = true).
 
 sections.GiftLeft:Divider()
 
@@ -317,7 +405,7 @@ sections.GiftLeft:Toggle({
         state.autoOpen = value
         updateStatusDisplay()
         Window:Notify({
-            Title = "Reallloween Hub",
+            Title = "Duckky Hub",
             Description = (value and "Đã BẬT " or "Đã TẮT ") .. "Auto mở: " .. state.targetGiftName,
             Lifetime = 3
         })
@@ -383,7 +471,7 @@ sections.GiftRight:Button({
             pcall(PresentCmds.OpenCurrent)
         end
         Window:Notify({
-            Title = "Reallloween Hub",
+            Title = "Duckky Hub",
             Description = "Đã gửi lệnh kích nổ các hộp quà trên mặt đất!",
             Lifetime = 2
         })
@@ -405,8 +493,8 @@ sections.PlayerLeft:Toggle({
 }, "AntiAfkToggle")
 
 sections.PlayerLeft:Paragraph({
-    Header = "Hướng dẫn Phím Tắt Menu",
-    Body = "Bấm phím RightControl (Ctrl Phải) trên bàn phím để Ẩn / Hiện nhanh cửa sổ Menu này bất cứ lúc nào."
+    Header = "Hướng Dẫn Bật / Tắt Menu",
+    Body = "1. Bấm nút [x] màu đỏ hoặc [-] màu vàng góc trái trên để đóng/thu nhỏ Menu.\n2. Bấm phím RightControl (Ctrl Phải) hoặc click vào nút tròn 🦆 Duckky Hub trên màn hình để mở lại Menu bất cứ lúc nào!\n3. Bạn có thể giữ chuột bất cứ vị trí nào trên Menu để kéo di chuyển."
 })
 
 sections.PlayerRight:Header({
@@ -448,7 +536,7 @@ sections.PlayerRight:Slider({
 })
 
 -- ================= TAB 3: CẤU HÌNH =================
-MacLib:SetFolder("ReallloweenHub")
+MacLib:SetFolder("DuckkyHub")
 tabs.Settings:InsertConfigSection("Left")
 tabs.AutoGift:Select()
 
@@ -476,6 +564,7 @@ task.spawn(function()
     Window.onUnloaded(function()
         state.autoOpen = false
         _G.AutoGiftSession = _G.AutoGiftSession + 1
+        if floatGui and floatGui.Parent then floatGui:Destroy() end
         for _, conn in ipairs(connections) do
             if conn.Connected then conn:Disconnect() end
         end
@@ -491,7 +580,7 @@ task.spawn(function()
                 state.autoOpen = false
                 updateStatusDisplay()
                 Window:Notify({
-                    Title = "Reallloween Hub",
+                    Title = "Duckky Hub",
                     Description = "🎉 Đã mở hết sạch '" .. state.targetGiftName .. "' trong túi đồ!",
                     Lifetime = 5
                 })
