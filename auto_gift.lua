@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
 
 local localPlayer = Players.LocalPlayer
@@ -175,166 +174,60 @@ local function checkAndHideGui(gui)
     end
 end
 
--- ================= KHỞI TẠO GIAO DIỆN DUCKKY HUB (MACLIB) =================
+-- ================= KHỞI TẠO GIAO DIỆN WINDUI (DUCKKY HUB) =================
 local loadCode = loadstring :: any
-local MacLib = loadCode((game :: any):HttpGet("https://github.com/biggaboy212/Maclib/releases/latest/download/maclib.txt"))()
+local WindUI = loadCode((game :: any):HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
 
--- Cấu hình Window với Title Duckky Hub, DragStyle = 2 (kéo ở bất kỳ vị trí nào trên menu)
-local Window = MacLib:Window({
+local Window = WindUI:CreateWindow({
     Title = "Duckky Hub",
-    Subtitle = "Pet Simulator 99 | Auto Gift & Hub",
-    Size = UDim2.fromOffset(820, 560),
-    DragStyle = 2, -- Giữ trỏ bất kỳ đâu trên thanh/bảng menu để di chuyển
-    DisabledWindowControls = {}, -- Bật đầy đủ 3 nút traffic lights: Đỏ (x - đóng/ẩn) và Vàng (- thu nhỏ)
-    ShowUserInfo = true,
-    Keybind = Enum.KeyCode.RightControl,
-    AcrylicBlur = true,
+    Icon = "gift",
+    Author = "Pet Simulator 99 | Auto Gift & Utilities",
+    Folder = "DuckkyHub",
+    Size = UDim2.fromOffset(580, 460),
+    Theme = "Dark",
+    Resizable = true,
+    Transparent = true,
+    ToggleKey = Enum.KeyCode.RightControl,
+    Topbar = {
+        ButtonsType = "Mac" -- 3 nút Traffic Lights phong cách macOS: Đỏ (x) và Vàng (-)
+    },
+    OpenButton = {
+        Title = "🦆 Duckky Hub",
+        Icon = "gift",
+        CornerRadius = UDim.new(0, 10),
+        StrokeThickness = 1.5,
+        Color = ColorSequence.new(
+            Color3.fromHex("FFAA00"),
+            Color3.fromHex("FF5500")
+        ),
+        OnlyMobile = false,
+        Enabled = true,
+        Draggable = true,
+    }
 })
 
--- Tạo nút bấm nổi (Floating Button) trên màn hình để mở/thu nhỏ nhanh bằng 1 click
-local function createFloatingToggleButton()
-    local guiParent = nil
-    pcall(function()
-        guiParent = game:GetService("CoreGui")
-    end)
-    if not guiParent then
-        guiParent = localPlayer:WaitForChild("PlayerGui")
-    end
-
-    local existing = guiParent:FindFirstChild("DuckkyHub_ToggleBtn")
-    if existing then existing:Destroy() end
-
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "DuckkyHub_ToggleBtn"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    local btn = Instance.new("TextButton")
-    btn.Name = "ToggleButton"
-    btn.Size = UDim2.fromOffset(130, 38)
-    btn.Position = UDim2.new(0, 20, 0.5, -19)
-    btn.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Text = "🦆 Duckky Hub"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.AutoButtonColor = true
-    btn.Parent = screenGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 10)
-    corner.Parent = btn
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(255, 170, 0)
-    stroke.Thickness = 1.5
-    stroke.Parent = btn
-
-    -- Kéo thả nút bấm nổi tự do trên màn hình
-    local dragging = false
-    local dragInput, dragStart, startPos
-
-    btn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = btn.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-
-    btn.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            btn.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    -- Khi bấm vào nút nổi: Bật / Tắt Menu
-    btn.MouseButton1Click:Connect(function()
-        local curState = Window:GetState()
-        Window:SetState(not curState)
-    end)
-
-    pcall(function()
-        screenGui.Parent = guiParent
-    end)
-
-    return screenGui
-end
-
-local floatGui = createFloatingToggleButton()
-
-Window:GlobalSetting({
-    Name = "Hiệu ứng kính mờ (UI Blur)",
-    Default = Window:GetAcrylicBlurState(),
-    Callback = function(bool)
-        Window:SetAcrylicBlurState(bool)
-    end,
+-- ================= TẠO TABS =================
+local GiftTab = Window:Tab({
+    Title = "Auto Mở Quà",
+    Icon = "gift",
 })
 
-Window:GlobalSetting({
-    Name = "Thông báo (Notifications)",
-    Default = Window:GetNotificationsState(),
-    Callback = function(bool)
-        Window:SetNotificationsState(bool)
-    end,
+local PlayerTab = Window:Tab({
+    Title = "Nhân Vật & AFK",
+    Icon = "user",
 })
-
-local tabGroups = {
-    MainGroup = Window:TabGroup()
-}
-
-local tabs = {
-    AutoGift = tabGroups.MainGroup:Tab({ Name = "Auto Mở Quà", Image = "rbxassetid://18821914323" }),
-    Player = tabGroups.MainGroup:Tab({ Name = "Nhân Vật & AFK", Image = "rbxassetid://10723407389" }),
-    Settings = tabGroups.MainGroup:Tab({ Name = "Cấu Hình", Image = "rbxassetid://10734950309" }),
-}
-
-local sections = {
-    GiftLeft = tabs.AutoGift:Section({ Side = "Left" }),
-    GiftRight = tabs.AutoGift:Section({ Side = "Right" }),
-    PlayerLeft = tabs.Player:Section({ Side = "Left" }),
-    PlayerRight = tabs.Player:Section({ Side = "Right" }),
-}
 
 -- ================= TAB 1: AUTO MỞ QUÀ =================
-sections.GiftLeft:Header({
-    Name = "Điều Khiển Mở Hộp Quà",
-    Text = "Điều Khiển Mở Hộp Quà"
-})
-
--- Bảng hiển thị trạng thái bên cột Phải
-sections.GiftRight:Header({
-    Name = "Trạng Thái Thời Gian Thực",
-    Text = "Trạng Thái Thời Gian Thực"
-})
-
-local statusParagraph = sections.GiftRight:Paragraph({
-    Header = "Trạng Thái: Đang chờ bật",
-    Body = "Đang kiểm tra kho đồ..."
+local StatusParagraph = GiftTab:Paragraph({
+    Title = "Trạng Thái: Đang chờ bật",
+    Desc = "Đang kiểm tra kho đồ..."
 })
 
 local function updateStatusDisplay()
     local uid, amount, cat = getGiftInfo(state.targetGiftName)
     local statusText = state.autoOpen and "🟢 ĐANG CHẠY AUTO" or "⚪ ĐANG TẠM DỪNG"
     local bodyText = string.format(
-        "Hộp quà: %s [%s]\nSố lượng còn trong túi: %d\nĐã mở trong phiên này: %d hộp\nUID: %s",
+        "Hộp quà: %s [%s] | Trong túi còn: %d | Đã mở: %d hộp\nUID: %s",
         state.targetGiftName,
         tostring(cat or "Chưa thấy"),
         amount,
@@ -342,189 +235,175 @@ local function updateStatusDisplay()
         tostring(uid or "Không có")
     )
     pcall(function()
-        statusParagraph:UpdateHeader(statusText)
-        statusParagraph:UpdateBody(bodyText)
+        StatusParagraph:SetTitle(statusText)
+        StatusParagraph:SetDesc(bodyText)
     end)
 end
 
--- Dropdown chọn hộp quà trong túi
+local GiftSection = GiftTab:Section({
+    Title = "Điều Khiển Mở Hộp Quà"
+})
+
 local initialGiftList = scanAvailableGiftsInBag()
-local defaultIdx = 1
-for idx, name in ipairs(initialGiftList) do
+local defaultGift = "Midnight Gift"
+for _, name in ipairs(initialGiftList) do
     if string.lower(name) == "midnight gift" then
-        defaultIdx = idx
+        defaultGift = name
         state.targetGiftName = name
         break
     end
 end
 
-local giftDropdown = sections.GiftLeft:Dropdown({
-    Name = "Chọn Hộp Quà Trong Túi",
-    Search = true,
-    Multi = false,
-    Required = true,
-    Options = initialGiftList,
-    Default = defaultIdx,
+local GiftDropdown = GiftSection:Dropdown({
+    Title = "Chọn Hộp Quà Trong Túi",
+    Values = initialGiftList,
+    Value = defaultGift,
     Callback = function(selectedName)
         if type(selectedName) == "string" and #selectedName > 0 then
             state.targetGiftName = selectedName
             cachedUid, cachedCategory, cachedDirData = nil, nil, nil
             updateStatusDisplay()
-            Window:Notify({
+            WindUI:Notify({
                 Title = "Duckky Hub",
-                Description = "Đã chọn hộp quà: " .. selectedName,
-                Lifetime = 3
+                Content = "Đã chọn hộp quà: " .. selectedName,
+                Duration = 2,
+                Icon = "gift"
             })
         end
-    end,
-}, "GiftDropdown")
+    end
+})
 
-sections.GiftLeft:Button({
-    Name = "🔄 Làm Mới Danh Sách Hộp Quà",
+GiftSection:Button({
+    Title = "🔄 Làm Mới Danh Sách Hộp Quà",
+    Desc = "Quét lại túi đồ để cập nhật hộp quà mới nhận",
     Callback = function()
         local newList = scanAvailableGiftsInBag()
         pcall(function()
-            giftDropdown:ClearOptions()
-            giftDropdown:InsertOptions(newList)
+            if GiftDropdown.SetValues then
+                GiftDropdown:SetValues(newList)
+            end
         end)
         updateStatusDisplay()
-        Window:Notify({
+        WindUI:Notify({
             Title = "Duckky Hub",
-            Description = "Đã quét lại túi đồ (" .. tostring(#newList) .. " vật phẩm)!",
-            Lifetime = 3
+            Content = "Đã quét lại túi đồ (" .. tostring(#newList) .. " vật phẩm)!",
+            Duration = 2,
+            Icon = "refresh-cw"
         })
-    end,
+    end
 })
 
-sections.GiftLeft:Divider()
-
-sections.GiftLeft:Toggle({
-    Name = "🚀 Bật Auto Mở Hộp Quà Liên Tục",
-    Default = false,
+GiftSection:Toggle({
+    Title = "🚀 Bật Auto Mở Hộp Quà Liên Tục",
+    Desc = "Tự động mở và kích nổ liên tục cho đến khi hết quà",
+    Value = false,
     Callback = function(value)
         state.autoOpen = value
         updateStatusDisplay()
-        Window:Notify({
+        WindUI:Notify({
             Title = "Duckky Hub",
-            Description = (value and "Đã BẬT " or "Đã TẮT ") .. "Auto mở: " .. state.targetGiftName,
-            Lifetime = 3
+            Content = (value and "Đã BẬT " or "Đã TẮT ") .. "Auto mở: " .. state.targetGiftName,
+            Duration = 2,
+            Icon = value and "play" or "square"
         })
-    end,
-}, "AutoOpenToggle")
+    end
+})
 
-sections.GiftLeft:Slider({
-    Name = "Số Hộp Mở Mỗi Đợt",
-    Default = 8,
-    Minimum = 1,
-    Maximum = 8,
-    DisplayMethod = "Round",
-    Precision = 0,
+GiftSection:Slider({
+    Title = "Số Hộp Mở Mỗi Đợt",
+    Desc = "Tối đa 8 hộp/lần",
+    Step = 1,
+    Value = { Min = 1, Max = 8, Default = 8 },
     Callback = function(val)
         state.maxAmountPerOpen = math.clamp(math.floor(val), 1, 8)
-    end,
-}, "AmountPerOpenSlider")
+    end
+})
 
-sections.GiftLeft:Slider({
-    Name = "Thời Gian Nghỉ (x0.1 Giây)",
-    Default = 15,
-    Minimum = 5,
-    Maximum = 50,
-    DisplayMethod = "Value",
-    Precision = 0,
+GiftSection:Slider({
+    Title = "Thời Gian Nghỉ (x0.1 Giây)",
+    Desc = "15 = 1.5 giây (ổn định nhất)",
+    Step = 1,
+    Value = { Min = 5, Max = 50, Default = 15 },
     Callback = function(val)
         state.delayTime = math.clamp(val / 10, 0.5, 5.0)
-    end,
-}, "DelayTimeSlider")
-
-sections.GiftLeft:SubLabel({
-    Text = "Mẹo: Mức 15 tương đương 1.5 giây (chuẩn ổn định nhất)."
+    end
 })
 
--- Cột Phải: Tối ưu chống lag & điều khiển phụ
-sections.GiftRight:Divider()
-
-sections.GiftRight:Header({
-    Name = "Tối Ưu Chống Crash & Ẩn GUI",
-    Text = "Tối Ưu Chống Crash & Ẩn GUI"
+local OptSection = GiftTab:Section({
+    Title = "Tối Ưu & Tiện Ích"
 })
 
-sections.GiftRight:Toggle({
-    Name = "🧹 Xóa Hiệu Ứng Nổ & Âm Thanh (Chống Crash)",
-    Default = true,
+OptSection:Toggle({
+    Title = "🧹 Xóa Hiệu Ứng Nổ & Âm Thanh (Chống Crash)",
+    Value = true,
     Callback = function(value)
         state.clearLagEffects = value
-    end,
-}, "ClearLagToggle")
+    end
+})
 
-sections.GiftRight:Toggle({
-    Name = "🙈 Tự Động Ẩn GUI Hiệu Ứng Mở Quà",
-    Default = true,
+OptSection:Toggle({
+    Title = "🙈 Tự Động Ẩn GUI Hiệu Ứng Mở Quà",
+    Value = true,
     Callback = function(value)
         state.hideGiftGui = value
-    end,
-}, "HideGiftGuiToggle")
+    end
+})
 
-sections.GiftRight:Button({
-    Name = "⚡ Kích Nổ Hộp Quà Dưới Đất Ngay",
+OptSection:Button({
+    Title = "⚡ Kích Nổ Hộp Quà Dưới Đất Ngay",
+    Desc = "Mở ngay các hộp quà đang kẹt trên mặt đất",
     Callback = function()
         if type(PresentCmds.OpenCurrent) == "function" then
             pcall(PresentCmds.OpenCurrent)
         end
-        Window:Notify({
+        WindUI:Notify({
             Title = "Duckky Hub",
-            Description = "Đã gửi lệnh kích nổ các hộp quà trên mặt đất!",
-            Lifetime = 2
+            Content = "Đã gửi lệnh kích nổ các hộp quà!",
+            Duration = 2,
+            Icon = "zap"
         })
-    end,
+    end
 })
 
--- ================= TAB 2: NHÂN VẬT & CHỐNG AFK =================
-sections.PlayerLeft:Header({
-    Name = "Tiện Ích Treo Máy (Anti-AFK)",
-    Text = "Tiện Ích Treo Máy (Anti-AFK)"
+-- ================= TAB 2: NHÂN VẬT & AFK =================
+local PlayerSection = PlayerTab:Section({
+    Title = "Tiện Ích Treo Máy"
 })
 
-sections.PlayerLeft:Toggle({
-    Name = "🛡️ Chống Kick AFK 20 Phút",
-    Default = true,
+PlayerSection:Toggle({
+    Title = "🛡️ Chống Kick AFK 20 Phút",
+    Value = true,
     Callback = function(value)
         state.antiAfk = value
-    end,
-}, "AntiAfkToggle")
-
-sections.PlayerLeft:Paragraph({
-    Header = "Hướng Dẫn Bật / Tắt Menu",
-    Body = "1. Bấm nút [x] màu đỏ hoặc [-] màu vàng góc trái trên để đóng/thu nhỏ Menu.\n2. Bấm phím RightControl (Ctrl Phải) hoặc click vào nút tròn 🦆 Duckky Hub trên màn hình để mở lại Menu bất cứ lúc nào!\n3. Bạn có thể giữ chuột bất cứ vị trí nào trên Menu để kéo di chuyển."
+    end
 })
 
-sections.PlayerRight:Header({
-    Name = "Chỉ Số Nhân Vật",
-    Text = "Chỉ Số Nhân Vật"
+PlayerSection:Paragraph({
+    Title = "Hướng Dẫn Bật / Tắt Menu",
+    Desc = "• Bấm nút [-] hoặc [x] trên thanh tiêu đề để thu nhỏ/đóng menu.\n• Click vào nút nổi '🦆 Duckky Hub' trên màn hình hoặc bấm phím RightControl (Ctrl Phải) để mở lại bất cứ lúc nào!\n• Nhấn giữ chuột bất kỳ đâu trên thanh tiêu đề để kéo di chuyển menu."
 })
 
-sections.PlayerRight:Slider({
-    Name = "Tốc Độ Chạy (WalkSpeed)",
-    Default = 16,
-    Minimum = 16,
-    Maximum = 150,
-    DisplayMethod = "Round",
-    Precision = 0,
+local StatsSection = PlayerTab:Section({
+    Title = "Chỉ Số Nhân Vật"
+})
+
+StatsSection:Slider({
+    Title = "Tốc Độ Chạy (WalkSpeed)",
+    Step = 1,
+    Value = { Min = 16, Max = 150, Default = 16 },
     Callback = function(val)
         local char = localPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if hum then
             hum.WalkSpeed = val
         end
-    end,
+    end
 })
 
-sections.PlayerRight:Slider({
-    Name = "Độ Cao Nhảy (JumpPower)",
-    Default = 50,
-    Minimum = 50,
-    Maximum = 200,
-    DisplayMethod = "Round",
-    Precision = 0,
+StatsSection:Slider({
+    Title = "Độ Cao Nhảy (JumpPower)",
+    Step = 1,
+    Value = { Min = 50, Max = 200, Default = 50 },
     Callback = function(val)
         local char = localPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -532,13 +411,8 @@ sections.PlayerRight:Slider({
             hum.UseJumpPower = true
             hum.JumpPower = val
         end
-    end,
+    end
 })
-
--- ================= TAB 3: CẤU HÌNH =================
-MacLib:SetFolder("DuckkyHub")
-tabs.Settings:InsertConfigSection("Left")
-tabs.AutoGift:Select()
 
 -- ================= VÒNG LẶP XỬ LÝ NGẦM =================
 task.spawn(function()
@@ -561,15 +435,6 @@ task.spawn(function()
         end
     end))
 
-    Window.onUnloaded(function()
-        state.autoOpen = false
-        _G.AutoGiftSession = _G.AutoGiftSession + 1
-        if floatGui and floatGui.Parent then floatGui:Destroy() end
-        for _, conn in ipairs(connections) do
-            if conn.Connected then conn:Disconnect() end
-        end
-    end)
-
     updateStatusDisplay()
 
     while _G.AutoGiftSession == currentSession do
@@ -579,10 +444,11 @@ task.spawn(function()
             if not giftUid or currentAmount <= 0 then
                 state.autoOpen = false
                 updateStatusDisplay()
-                Window:Notify({
+                WindUI:Notify({
                     Title = "Duckky Hub",
-                    Description = "🎉 Đã mở hết sạch '" .. state.targetGiftName .. "' trong túi đồ!",
-                    Lifetime = 5
+                    Content = "🎉 Đã mở hết sạch '" .. state.targetGiftName .. "' trong túi đồ!",
+                    Duration = 5,
+                    Icon = "check-circle"
                 })
             else
                 local amountToOpen = math.min(state.maxAmountPerOpen, currentAmount)
@@ -624,5 +490,9 @@ task.spawn(function()
         else
             task.wait(0.5)
         end
+    end
+
+    for _, conn in ipairs(connections) do
+        if conn.Connected then conn:Disconnect() end
     end
 end)
