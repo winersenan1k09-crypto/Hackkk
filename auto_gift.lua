@@ -21,16 +21,13 @@ local delayTime = _G.DelayTime or 1.5
 _G.AutoGiftSession = (_G.AutoGiftSession or 0) + 1
 local currentSession = _G.AutoGiftSession
 
-local rng = Random.new()
 local cachedUid = nil
 local cachedCategory = nil
 
-local PresentCmds = nil
-local LootboxCmds = nil
-pcall(function() PresentCmds = require(clientFolder:FindFirstChild("PresentCmds")) end)
-pcall(function() LootboxCmds = require(clientFolder:FindFirstChild("LootboxCmds")) end)
+local PresentCmds = require(clientFolder:WaitForChild("PresentCmds"))
+local LootboxCmds = require(clientFolder:WaitForChild("LootboxCmds"))
 
--- 1. Tìm UID và số lượng của Midnight Gift trong túi
+-- 1. Tìm UID và số lượng thực tế của Midnight Gift
 local function getGiftInfo(giftName)
     local saveData = Save.Get()
     if not saveData or not saveData.Inventory then
@@ -63,154 +60,139 @@ local function getGiftInfo(giftName)
     return nil, 0, nil
 end
 
--- 2. In thông tin hàm của PresentCmds & LootboxCmds và các Remote liên quan
-local function printModuleDetails()
-    print("=== [AutoGift v6] KIỂM TRA PRESENTCMDS & REMOTES ===")
-    for _, rem in ipairs(network:GetChildren()) do
-        local nl = string.lower(rem.Name)
-        if string.find(nl, "kx") or string.find(nl, "present") or string.find(nl, "lootbox") or string.find(nl, "giftbag") then
-            print(string.format("  [Remote] '%s' (%s)", rem.Name, rem.ClassName))
-        end
-    end
-
-    if PresentCmds and type(PresentCmds) == "table" then
-        for k, fn in pairs(PresentCmds) do
-            if type(fn) == "function" then
-                local line, nparams, isvar = "?", "?", "?"
-                pcall(function()
-                    line, nparams, isvar = debug.info(fn, "la")
-                end)
-                local constStr = ""
-                if debug and debug.getconstants then
-                    local okC, cs = pcall(debug.getconstants, fn)
-                    if okC and type(cs) == "table" then
-                        local arr = {}
-                        for _, c in pairs(cs) do
-                            if type(c) == "string" or type(c) == "number" then
-                                table.insert(arr, tostring(c))
-                            end
-                        end
-                        constStr = " | Consts: " .. table.concat(arr, ", ")
-                    end
+-- 2. In ngắn gọn Constants & Protos của PresentCmds.OpenCurrent, Drop, Current và LootboxCmds.Open
+local function dumpFuncInfo(label, fn)
+    if type(fn) ~= "function" then return end
+    local line, nparams = "?", "?"
+    pcall(function() line, nparams = debug.info(fn, "la") end)
+    local constsList = {}
+    if debug and debug.getconstants then
+        local ok, cs = pcall(debug.getconstants, fn)
+        if ok and type(cs) == "table" then
+            for _, c in pairs(cs) do
+                if type(c) == "string" or type(c) == "number" then
+                    table.insert(constsList, tostring(c))
                 end
-                print(string.format("  [PresentCmds.%s] Line:%s Params:%s%s", tostring(k), tostring(line), tostring(nparams), constStr))
             end
         end
     end
+    print(string.format("  [%s] L:%s P:%s | Consts: %s", label, tostring(line), tostring(nparams), table.concat(constsList, ", ")))
 
-    if LootboxCmds and type(LootboxCmds) == "table" then
-        for k, fn in pairs(LootboxCmds) do
-            if type(fn) == "function" then
-                local line, nparams = "?", "?"
-                pcall(function()
-                    line, nparams = debug.info(fn, "la")
-                end)
-                local constStr = ""
-                if debug and debug.getconstants then
-                    local okC, cs = pcall(debug.getconstants, fn)
-                    if okC and type(cs) == "table" then
-                        local arr = {}
-                        for _, c in pairs(cs) do
-                            if type(c) == "string" or type(c) == "number" then
-                                table.insert(arr, tostring(c))
-                            end
+    -- In thêm các hàm con (protos) bên trong nếu có
+    if debug and debug.getprotos then
+        local okP, protos = pcall(debug.getprotos, fn)
+        if okP and type(protos) == "table" then
+            for idx, p in ipairs(protos) do
+                local pConsts = {}
+                local okPC, pcs = pcall(debug.getconstants, p)
+                if okPC and type(pcs) == "table" then
+                    for _, c in pairs(pcs) do
+                        if type(c) == "string" or type(c) == "number" then
+                            table.insert(pConsts, tostring(c))
                         end
-                        constStr = " | Consts: " .. table.concat(arr, ", ")
                     end
                 end
-                print(string.format("  [LootboxCmds.%s] Line:%s Params:%s%s", tostring(k), tostring(line), tostring(nparams), constStr))
+                print(string.format("    -> Proto#%d Consts: %s", idx, table.concat(pConsts, ", ")))
             end
         end
     end
-    print("====================================================")
 end
 
--- 3. Tạo danh sách tọa độ mặt đất quanh nhân vật
-local function getDropVectors(count)
-    -- Ưu tiên dùng hàm tính tọa độ mặt đất chuẩn của game nếu có
-    if PresentCmds and type(PresentCmds.Ground) == "function" then
-        local ok, res = pcall(PresentCmds.Ground, count)
-        if ok and type(res) == "table" and #res == count and typeof(res[1]) == "Vector3" then
-            return res
+-- 3. Tạo đối tượng Item chuẩn cho hàm LootboxCmds.Open(item, amount)
+local function makeItemObject(uid, giftName)
+    -- Thử tạo qua thư viện Items của game trước (nếu có)
+    local itemsFolder = library:FindFirstChild("Items")
+    if itemsFolder then
+        local lootboxItemMod = itemsFolder:FindFirstChild("LootboxItem")
+        if lootboxItemMod then
+            local ok, LItem = pcall(require, lootboxItemMod)
+            if ok and type(LItem) == "function" then
+                local ok2, obj = pcall(LItem, giftName)
+                if ok2 and type(obj) == "table" then
+                    obj._uid = uid
+                    return obj
+                end
+            end
         end
     end
 
-    local positions = table.create(count)
-    local character = localPlayer.Character
-    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-    local centerPos = rootPart and rootPart.Position or Vector3.new(152.0, 14.0, -210.0)
-
-    local rayParams = RaycastParams.new()
-    if character then
-        rayParams.FilterDescendantsInstances = { character }
-        rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    end
-
-    for i = 1, count do
-        local offsetX = rng:NextNumber(-5, 5)
-        local offsetZ = rng:NextNumber(-5, 5)
-        local rayResult = Workspace:Raycast(centerPos + Vector3.new(offsetX, 10, offsetZ), Vector3.new(0, -50, 0), rayParams)
-        if rayResult then
-            positions[i] = rayResult.Position
-        else
-            positions[i] = centerPos + Vector3.new(offsetX, -3, offsetZ)
+    -- Tạo đối tượng giả lập có đầy đủ hàm GetId() và GetUID() như LootboxCmds.Open yêu cầu
+    local fakeItem = {
+        _uid = uid,
+        _id = giftName,
+        id = giftName,
+        uid = uid,
+        GetId = function() return giftName end,
+        GetUID = function() return uid end,
+    }
+    return setmetatable(fakeItem, {
+        __index = function(_, k)
+            warn("[AutoGift v7] LootboxCmds.Open gọi thêm thuộc tính: " .. tostring(k))
+            return function() return nil end
         end
-    end
-
-    return positions
+    })
 end
 
 -- ================= KHỞI CHẠY =================
 task.spawn(function()
     local initialUid, initialAmount, initialCat = getGiftInfo(targetGiftName)
     print(string.format(
-        "[AutoGift v6] Phiên #%d | Quà: '%s' [%s] | UID: %s | Số lượng: %d",
-        currentSession, targetGiftName, tostring(initialCat), tostring(initialUid), initialAmount
+        "=== [AutoGift v7] Quà: '%s' [%s] | UID: %s | Số lượng: %d ===",
+        targetGiftName, tostring(initialCat), tostring(initialUid), initialAmount
     ))
 
-    printModuleDetails()
-
-    local openGiftRemote = network:FindFirstChild("KX_Release")
+    dumpFuncInfo("PresentCmds.OpenCurrent", PresentCmds.OpenCurrent)
+    dumpFuncInfo("PresentCmds.Drop", PresentCmds.Drop)
+    dumpFuncInfo("PresentCmds.Current", PresentCmds.Current)
+    dumpFuncInfo("LootboxCmds.Open", LootboxCmds.Open)
 
     while _G.AutoOpenGift and (_G.AutoGiftSession == currentSession) do
         local giftUid, currentAmount = getGiftInfo(targetGiftName)
 
         if not giftUid or currentAmount <= 0 then
-            print("[AutoGift v6] ĐÃ MỞ HẾT SẠCH QUÀ TRONG TÚI!")
+            print("[AutoGift v7] ĐÃ MỞ HẾT SẠCH QUÀ TRONG TÚI!")
             break
         end
 
         local amountToOpen = math.min(maxAmountPerOpen, currentAmount)
-        local vectors = getDropVectors(amountToOpen)
+        local itemObj = makeItemObject(giftUid, targetGiftName)
 
         -- Bước 1: Kích nổ các hộp quà đang nằm sẵn trên đất (nếu có)
-        if PresentCmds and type(PresentCmds.OpenCurrent) == "function" then
+        if type(PresentCmds.OpenCurrent) == "function" then
             pcall(PresentCmds.OpenCurrent)
         end
 
-        -- Bước 2: Gửi trực tiếp KX_Release lên Server để thả 8 hộp quà mới
-        if openGiftRemote then
-            local ok, res1, res2 = pcall(function()
-                return openGiftRemote:InvokeServer(giftUid, amountToOpen, vectors)
+        -- Bước 2: Gọi trực tiếp hàm LootboxCmds.Open chính chủ của game!
+        -- Hàm này tự động chạy ComputePositions() và gọi KX_Release với tham số chuẩn 100%
+        local okOpen, resOpen, errOpen = pcall(LootboxCmds.Open, itemObj, amountToOpen)
+        print(string.format("[AutoGift v7] Gọi LootboxCmds.Open(%d) -> ok=%s, res=%s, err=%s", amountToOpen, tostring(okOpen), tostring(resOpen), tostring(errOpen)))
+
+        -- Bước 3: Đợi hộp quà chạm đất rồi tự động kích nổ luôn (OpenCurrent)
+        task.wait(0.6)
+        if type(PresentCmds.OpenCurrent) == "function" then
+            local okPop, resPop = pcall(PresentCmds.OpenCurrent)
+            print(string.format("[AutoGift v7] Gọi PresentCmds.OpenCurrent() -> ok=%s, res=%s", tostring(okPop), tostring(resPop)))
+        end
+
+        -- Xóa trạng thái hộp quà cũ trên mặt đất để không bị báo 'Not enough space' ở đợt sau
+        if type(PresentCmds.Current) == "function" then
+            pcall(function()
+                local cur = PresentCmds.Current()
+                if type(cur) == "table" then
+                    for _, p in pairs(cur) do
+                        if type(p) == "table" then
+                            p._destroyed = true
+                        end
+                    end
+                end
             end)
-            if not ok or res1 == false then
-                warn(string.format("[AutoGift v6] KX_Release trả về: %s | %s", tostring(res1), tostring(res2)))
-            else
-                print(string.format("🎁 [AutoGift v6] Đã thả %d hộp xuống đất! Đang tự động kích nổ...", amountToOpen))
-            end
-        end
-
-        -- Bước 3: Đợi 0.5s rồi gọi OpenCurrent() để tự động Click kích nổ 8 hộp vừa thả
-        task.wait(0.5)
-        if PresentCmds and type(PresentCmds.OpenCurrent) == "function" then
-            pcall(PresentCmds.OpenCurrent)
         end
 
         task.wait(delayTime)
 
         local _, afterAmount = getGiftInfo(targetGiftName)
         if afterAmount < currentAmount then
-            print(string.format("✅ [AutoGift v6] Mở thành công! Đã giảm %d hộp -> Còn lại: %d", currentAmount - afterAmount, afterAmount))
+            print(string.format("✅ [AutoGift v7] MỞ THÀNH CÔNG %d HỘP! Còn lại: %d", currentAmount - afterAmount, afterAmount))
         end
     end
 end)
