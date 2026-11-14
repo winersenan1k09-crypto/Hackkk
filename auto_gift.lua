@@ -305,23 +305,8 @@ sections.GiftLeft:Button({
     end,
 })
 
-sections.GiftLeft:Input({
-    Name = "Hoặc Tự Nhập Tên Hộp Quà",
-    Placeholder = "Ví dụ: Midnight Gift",
-    AcceptedCharacters = "All",
-    Callback = function(input)
-        if type(input) == "string" and #input > 0 then
-            state.targetGiftName = input
-            cachedUid, cachedCategory, cachedDirData = nil, nil, nil
-            updateStatusDisplay()
-            Window:Notify({
-                Title = "Reallloween Hub",
-                Description = "Đã đặt tên hộp quà: " .. input,
-                Lifetime = 3
-            })
-        end
-    end,
-}, "CustomGiftInput")
+-- sections.GiftLeft:Input({ ... }) được bỏ qua do hàm checkSize của Input trong Maclib bị xung đột capability với bản Roblox mới.
+-- Dropdown bên trên đã quét và liệt kê đầy đủ 100% tất cả các loại hộp quà trong túi rồi (hỗ trợ tìm kiếm Search = true).
 
 sections.GiftLeft:Divider()
 
